@@ -7,7 +7,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: ALLOWED_ORIGINS
-        value: https://vertex-web-9e98.onrender.com,https://vertex.adamyahmadi.com
+        value: https://vertex-web-9e98.onrender.com,https://vertex.ademyahmadi.com
       - key: MAX_UPLOAD_MB
         value: "15"
 

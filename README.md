@@ -35,7 +35,7 @@ It comes in two forms:
 
 ## Live Demo
 
-**[vertex.adamyahmadi.com](https://vertex.adamyahmadi.com)**
+**[vertex.ademyahmadi.com](https://vertex.ademyahmadi.com)**
 
 > [!IMPORTANT]
 > The demo runs on a **free server**, so to keep it responsive it uses a **lightweight detection model** and **scales large images down to 1800px**. For best results, photograph the page against a plain, uncluttered background. For **full-resolution scans and the most accurate model**, install the [CLI](#cli) — it runs the full pipeline locally with no size limits.
@@ -77,7 +77,7 @@ The command-line tool gives you the full-quality experience: the most accurate m
 ### Installation
 
 ```bash
-git clone https://github.com/AdamYahmadi/vertex.git
+git clone https://github.com/AdemYahmadi/vertex.git
 cd vertex
 pipx install .
 ```

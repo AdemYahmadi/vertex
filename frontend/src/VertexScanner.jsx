@@ -677,7 +677,7 @@ export default function VertexScanner() {
             )}
             <a
               className="vx-link vx-link-icon"
-              href="https://github.com/AdamYahmadi/vertex"
+              href="https://github.com/AdemYahmadi/vertex"
               target="_blank"
               rel="noreferrer"
             >
@@ -736,7 +736,7 @@ export default function VertexScanner() {
                 <div className="vx-note">
                   <a
                     className="vx-note-link"
-                    href="https://github.com/AdamYahmadi/vertex#cli"
+                    href="https://github.com/AdemYahmadi/vertex#cli"
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -1048,7 +1048,7 @@ export default function VertexScanner() {
           <nav className="vx-footer-links">
             <a
               className="vx-link"
-              href="https://github.com/AdamYahmadi/vertex"
+              href="https://github.com/AdemYahmadi/vertex"
               target="_blank"
               rel="noreferrer"
             >
@@ -1056,7 +1056,7 @@ export default function VertexScanner() {
             </a>
             <a
               className="vx-link"
-              href="https://github.com/AdamYahmadi/vertex/issues"
+              href="https://github.com/AdemYahmadi/vertex/issues"
               target="_blank"
               rel="noreferrer"
             >
@@ -1064,7 +1064,7 @@ export default function VertexScanner() {
             </a>
             <a
               className="vx-link"
-              href="https://github.com/AdamYahmadi/vertex#readme"
+              href="https://github.com/AdemYahmadi/vertex#readme"
               target="_blank"
               rel="noreferrer"
             >
