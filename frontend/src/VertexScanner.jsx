@@ -85,7 +85,7 @@ const SCAN_MESSAGES = {
   503: "The scanner is starting up. Please try again in a few seconds.",
 };
 
-const COLD_START_STATUSES = new Set([429, 500, 502, 503, 504]);
+const COLD_START_STATUSES = new Set([429, 502, 503, 504]);
 
 async function downscale(file, maxSide) {
   const url = URL.createObjectURL(file);
@@ -448,7 +448,7 @@ const FEATURES = [
   {
     icon: ShieldCheck,
     t: "Private by default",
-    d: "PDFs are assembled locally in your browser at download time. Your documents are never stored on a server.",
+    d: "Photos are processed in memory and discarded as soon as the scan returns. PDFs are assembled locally in your browser, and nothing is stored on a server.",
   },
 ];
 
@@ -699,7 +699,7 @@ export default function VertexScanner() {
                 Vertex detects the document in a photo, corrects the
                 perspective, cleans the lighting, and exports a crisp PDF. It
                 handles complex backgrounds and any paper size, and never
-                uploads your files to a server.
+                keeps a copy of your files.
               </p>
             </section>
 
