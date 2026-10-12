@@ -9,6 +9,7 @@ import {
   Loader2,
   X,
   AlertCircle,
+  RotateCwSquare,
 } from "lucide-react";
 
 const GitHubIcon = ({ size = 14 }) => (
@@ -233,7 +234,7 @@ function mockScan(file) {
   });
 }
 
-async function encodeJpeg(blob) {
+async function encodeJpeg(blob, rotation = 0) {
   const url = URL.createObjectURL(blob);
   const img = await new Promise((res, rej) => {
     const i = new Image();
@@ -242,24 +243,28 @@ async function encodeJpeg(blob) {
     i.src = url;
   });
   URL.revokeObjectURL(url);
-  const W = img.naturalWidth,
-    H = img.naturalHeight;
+  const sideways = rotation % 180 !== 0;
+  const W = sideways ? img.naturalHeight : img.naturalWidth,
+    H = sideways ? img.naturalWidth : img.naturalHeight;
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(img, 0, 0);
+  ctx.translate(W / 2, H / 2);
+  ctx.rotate((rotation * Math.PI) / 180);
+  ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
   const raw = atob(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
   const jpeg = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) jpeg[i] = raw.charCodeAt(i) & 0xff;
   return { jpeg, W, H };
 }
 
-async function imagesToPdfBlob(blobs) {
+async function imagesToPdfBlob(items) {
   const pages = [];
-  for (const b of blobs) pages.push(await encodeJpeg(b));
+  for (const it of items)
+    pages.push(await encodeJpeg(it.resultBlob, it.rotation));
   const N = pages.length,
     parts = [],
     off = [];
@@ -505,6 +510,7 @@ export default function VertexScanner() {
           state: "pending",
           resultBlob: null,
           resultUrl: null,
+          rotation: 0,
           error: "",
         };
       });
@@ -513,7 +519,36 @@ export default function VertexScanner() {
     [patch],
   );
 
+  const spins = useRef(new Map());
+  const [resultSize, setResultSize] = useState(null);
+  const [surface, setSurface] = useState(null);
+  const surfaceObserver = useRef(null);
+
+  const surfaceRef = useCallback((el) => {
+    surfaceObserver.current?.disconnect();
+    surfaceObserver.current = null;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSurface({ w: width, h: height });
+    });
+    ro.observe(el);
+    surfaceObserver.current = ro;
+  }, []);
+
+  const rotatePage = useCallback((id) => {
+    const it = itemsRef.current.find((i) => i.id === id);
+    if (!it) return;
+    spins.current.set(id, (spins.current.get(id) ?? it.rotation) + 90);
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === id ? { ...i, rotation: (i.rotation + 90) % 360 } : i,
+      ),
+    );
+  }, []);
+
   const removeItem = useCallback((id) => {
+    spins.current.delete(id);
     setItems((prev) => {
       const gone = prev.find((i) => i.id === id);
       if (gone?.originalUrl) URL.revokeObjectURL(gone.originalUrl);
@@ -690,7 +725,7 @@ export default function VertexScanner() {
     setDownloading(true);
     try {
       if (done.length === 1) {
-        const pdf = await imagesToPdfBlob([done[0].resultBlob]);
+        const pdf = await imagesToPdfBlob([done[0]]);
         saveBlob(pdf, `${done[0].name.replace(/\.[^.]+$/, "")}.pdf`);
         return;
       }
@@ -700,7 +735,7 @@ export default function VertexScanner() {
         String(d.getMonth() + 1).padStart(2, "0"),
         String(d.getDate()).padStart(2, "0"),
       ].join("-");
-      const pdf = await imagesToPdfBlob(done.map((i) => i.resultBlob));
+      const pdf = await imagesToPdfBlob(done);
       saveBlob(pdf, `vertex-scan-${date}.pdf`);
     } finally {
       setDownloading(false);
@@ -716,7 +751,7 @@ export default function VertexScanner() {
         files = [];
       for (let i = 0; i < done.length; i++) {
         const it = done[i];
-        const pdf = await imagesToPdfBlob([it.resultBlob]);
+        const pdf = await imagesToPdfBlob([it]);
         const bytes = new Uint8Array(await pdf.arrayBuffer());
         files.push({
           name: `${folder}/${String(i + 1).padStart(2, "0")}-${it.name.replace(/\.[^.]+$/, "")}.pdf`,
@@ -730,6 +765,7 @@ export default function VertexScanner() {
   }, [items]);
 
   const reset = useCallback(() => {
+    spins.current.clear();
     setItems((prev) => {
       revokeUrls(prev);
       return [];
@@ -751,6 +787,39 @@ export default function VertexScanner() {
   }, []);
 
   const selected = items.find((i) => i.id === selectedId) || items[0] || null;
+  const angleOf = (it) => spins.current.get(it.id) ?? it.rotation;
+
+  let resultScale = 1;
+  if (
+    selected?.rotation % 180 &&
+    surface &&
+    resultSize?.url === selected.resultUrl
+  ) {
+    const fit = Math.min(1, surface.w / resultSize.w, surface.h / resultSize.h);
+    const dw = resultSize.w * fit;
+    const dh = resultSize.h * fit;
+    resultScale = Math.min(1, surface.w / dh, surface.h / dw);
+  }
+
+  const canRotate = selected?.state === "done";
+  const selectedIdForKeys = canRotate ? selected.id : null;
+  useEffect(() => {
+    if (selectedIdForKeys == null) return;
+    const onKey = (e) => {
+      if (e.key !== "r" && e.key !== "R") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      )
+        return;
+      e.preventDefault();
+      rotatePage(selectedIdForKeys);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIdForKeys, rotatePage]);
 
   useEffect(() => {
     if (items.length === 0) {
@@ -1016,6 +1085,15 @@ export default function VertexScanner() {
                         src={it.resultUrl || it.originalUrl}
                         alt=""
                         draggable={false}
+                        style={
+                          it.resultUrl && angleOf(it)
+                            ? {
+                                transform: `rotate(${angleOf(it)}deg)${
+                                  it.rotation % 180 ? " scale(1.29)" : ""
+                                }`,
+                              }
+                            : undefined
+                        }
                       />
                       {it.state === "processing" && (
                         <span className="vx-thumb-busy">
@@ -1102,13 +1180,49 @@ export default function VertexScanner() {
                           ? "Error"
                           : "Preview"}
                   </span>
+                  {canRotate && selected.rotation !== 0 && (
+                    <span className="vx-pane-rot">{selected.rotation}°</span>
+                  )}
+                  {canRotate && (
+                    <div
+                      className="vx-pane-tools"
+                      role="toolbar"
+                      aria-label="Page tools"
+                    >
+                      <button
+                        className="vx-tool"
+                        aria-label="Rotate page 90° clockwise"
+                        aria-keyshortcuts="R"
+                        title="Rotate 90° clockwise (R)"
+                        onClick={() => rotatePage(selected.id)}
+                      >
+                        <RotateCwSquare size={14} strokeWidth={1.75} />
+                        Rotate
+                      </button>
+                    </div>
+                  )}
                 </figcaption>
-                <div className="vx-pane-surface">
+                <div className="vx-pane-surface" ref={surfaceRef}>
                   {selected.state === "done" && (
                     <img
+                      key={selected.id}
                       src={selected.resultUrl}
                       alt="Scanned"
-                      className="vx-doc"
+                      className="vx-doc vx-doc-rot"
+                      style={
+                        angleOf(selected)
+                          ? {
+                              transform: `rotate(${angleOf(selected)}deg) scale(${resultScale})`,
+                            }
+                          : undefined
+                      }
+                      onLoad={(e) =>
+                        setResultSize({
+                          url: selected.resultUrl,
+                          w: e.currentTarget.naturalWidth,
+                          h: e.currentTarget.naturalHeight,
+                        })
+                      }
                     />
                   )}
                   {selected.state === "processing" && (
@@ -1427,7 +1541,7 @@ const CSS = `
 .vx-thumb.on .vx-thumb-btn:focus-visible{box-shadow:0 0 0 1px var(--accent), var(--ring);}
 .vx-thumb.is-lifted .vx-thumb-btn{box-shadow:0 4px 12px rgba(16,16,20,.14);}
 .vx-thumb.on.is-lifted .vx-thumb-btn{box-shadow:0 0 0 1px var(--accent), 0 4px 12px rgba(16,16,20,.14);}
-.vx-thumb-btn img{display:block; width:100%; height:100%; object-fit:cover; pointer-events:none;}
+.vx-thumb-btn img{display:block; width:100%; height:100%; object-fit:cover; pointer-events:none; transition:transform .15s ease;}
 .vx-thumb-busy{position:absolute; inset:0; display:grid; place-items:center; background:color-mix(in srgb, var(--surface) 65%, transparent);}
 .vx-thumb-n{position:absolute; left:3px; bottom:3px; min-width:16px; height:16px; padding:0 4px; display:grid; place-items:center;
   font-size:10.5px; font-weight:600; line-height:1; font-variant-numeric:tabular-nums; color:var(--text-2);
@@ -1444,6 +1558,20 @@ const CSS = `
 .vx-pane{margin:0; min-width:0;}
 .vx-pane-label{display:flex; align-items:center; gap:5px; min-height:22px; margin-bottom:8px; font-size:10.5px; font-weight:600; color:var(--faint); letter-spacing:.06em; text-transform:uppercase;}
 .vx-scanned{color:var(--accent); font-weight:600;}
+.vx-pane-rot{font-size:10.5px; font-weight:500; color:var(--faint); letter-spacing:0; font-variant-numeric:tabular-nums;}
+.vx-pane-tools{margin-left:auto; display:flex; align-items:center; gap:2px;}
+.vx-tool{display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 7px 0 6px; font-family:inherit; font-size:11.5px; font-weight:500;
+  letter-spacing:0; text-transform:none; color:var(--muted); background:none; border:0; border-radius:4px; cursor:pointer;
+  transition:color .12s ease, background .12s ease;}
+.vx-tool svg{color:var(--faint); transition:color .12s ease;}
+@media (hover:hover){
+  .vx-tool:hover{color:var(--text); background:rgba(24,24,27,.05);}
+  .vx-tool:hover svg{color:var(--text-2);}
+}
+.vx-tool:active{color:var(--text); background:rgba(24,24,27,.05);}
+.vx-tool:focus-visible{outline:none; box-shadow:var(--ring);}
+@media (pointer:coarse){ .vx-tool{height:30px; padding:0 10px 0 8px; font-size:12.5px;} }
+.vx-doc-rot{transition:transform .15s ease;}
 .vx-pane-surface{position:relative; display:flex; align-items:center; justify-content:center;
   height:clamp(340px,54vh,600px); padding:12px; background:var(--surface);
   border:1px solid var(--border); border-radius:var(--radius-lg);}
