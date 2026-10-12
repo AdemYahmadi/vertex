@@ -8,8 +8,6 @@ import {
   ShieldCheck,
   Loader2,
   X,
-  FileDown,
-  ArrowLeft,
   AlertCircle,
 } from "lucide-react";
 
@@ -42,7 +40,7 @@ const VertexMark = ({ size = 22 }) => (
 
 const USE_MOCK = false;
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/scan";
-const MAX_SIDE = 1800;
+const MAX_SIDE = import.meta.env.DEV ? 0 : 1800;
 const IS_HOSTED = import.meta.env.VITE_HOSTED === "true";
 
 const HEALTH_URL = (() => {
@@ -88,6 +86,7 @@ const SCAN_MESSAGES = {
 const COLD_START_STATUSES = new Set([429, 502, 503, 504]);
 
 async function downscale(file, maxSide) {
+  if (!maxSide) return file;
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => {
@@ -414,6 +413,14 @@ function makeZip(files) {
 }
 
 const ACCEPT = ["image/jpeg", "image/png"];
+
+function revokeUrls(list) {
+  list.forEach((i) => {
+    if (i.originalUrl) URL.revokeObjectURL(i.originalUrl);
+    if (i.resultUrl) URL.revokeObjectURL(i.resultUrl);
+  });
+}
+
 let _id = 0;
 
 const HOW = [
@@ -457,6 +464,7 @@ export default function VertexScanner() {
   const [processing, setProcessing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [exportMode, setExportMode] = useState("merged");
   const [selectedId, setSelectedId] = useState(null);
   const [rescanTick, setRescanTick] = useState(0);
   const inputRef = useRef(null);
@@ -556,6 +564,24 @@ export default function VertexScanner() {
         saveBlob(pdf, `${done[0].name.replace(/\.[^.]+$/, "")}.pdf`);
         return;
       }
+      const d = new Date();
+      const date = [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-");
+      const pdf = await imagesToPdfBlob(done.map((i) => i.resultBlob));
+      saveBlob(pdf, `vertex-scan-${date}.pdf`);
+    } finally {
+      setDownloading(false);
+    }
+  }, [items]);
+
+  const downloadSeparate = useCallback(async () => {
+    const done = items.filter((i) => i.state === "done" && i.resultBlob);
+    if (done.length < 2) return;
+    setDownloading(true);
+    try {
       const folder = "vertex-scans",
         files = [];
       for (let i = 0; i < done.length; i++) {
@@ -573,18 +599,9 @@ export default function VertexScanner() {
     }
   }, [items]);
 
-  const downloadOne = useCallback(async (it) => {
-    if (!it.resultBlob) return;
-    const pdf = await imagesToPdfBlob([it.resultBlob]);
-    saveBlob(pdf, `${it.name.replace(/\.[^.]+$/, "")}.pdf`);
-  }, []);
-
   const reset = useCallback(() => {
     setItems((prev) => {
-      prev.forEach((i) => {
-        if (i.originalUrl) URL.revokeObjectURL(i.originalUrl);
-        if (i.resultUrl) URL.revokeObjectURL(i.resultUrl);
-      });
+      revokeUrls(prev);
       return [];
     });
     if (inputRef.current) inputRef.current.value = "";
@@ -594,10 +611,7 @@ export default function VertexScanner() {
   itemsRef.current = items;
   useEffect(
     () => () => {
-      itemsRef.current.forEach((i) => {
-        if (i.originalUrl) URL.revokeObjectURL(i.originalUrl);
-        if (i.resultUrl) URL.revokeObjectURL(i.resultUrl);
-      });
+      revokeUrls(itemsRef.current);
     },
     [],
   );
@@ -630,6 +644,8 @@ export default function VertexScanner() {
 
   const doneCount = items.filter((i) => i.state === "done").length;
   const pendingCount = items.filter((i) => i.state === "pending").length;
+  const errorCount = items.filter((i) => i.state === "error").length;
+  const exportSeparate = exportMode === "separate" && doneCount > 1;
   const phase = processing
     ? "processing"
     : items.every((i) => i.state === "done" || i.state === "error")
@@ -657,7 +673,7 @@ export default function VertexScanner() {
             Vertex
           </button>
           <nav className="vx-nav-r">
-            {view === "landing" ? (
+            {view === "landing" && (
               <>
                 <a className="vx-link" href="#how" onClick={scrollToId("how")}>
                   How it works
@@ -670,10 +686,6 @@ export default function VertexScanner() {
                   Features
                 </a>
               </>
-            ) : (
-              <button className="vx-link" onClick={reset}>
-                Start over
-              </button>
             )}
             <a
               className="vx-link vx-link-icon"
@@ -698,8 +710,8 @@ export default function VertexScanner() {
               <p className="vx-lead">
                 Vertex detects the document in a photo, corrects the
                 perspective, cleans the lighting, and exports a crisp PDF. It
-                handles complex backgrounds and any paper size, and never
-                keeps a copy of your files.
+                handles complex backgrounds and any paper size, and never keeps
+                a copy of your files.
               </p>
             </section>
 
@@ -793,14 +805,10 @@ export default function VertexScanner() {
       {view === "workspace" && selected && (
         <main className="vx-main vx-main-ws">
           <div className="vx-ws-bar">
-            <button className="vx-chrome-back" onClick={reset}>
-              <ArrowLeft size={13} strokeWidth={2} />
-              Documents
-              <span className="vx-chrome-count">
-                {items.length} {items.length === 1 ? "document" : "documents"}
-                {doneCount ? ` · ${doneCount} scanned` : ""}
-              </span>
-            </button>
+            <h1 className="vx-ws-title">
+              Pages
+              <span className="vx-ws-title-count">{items.length} total</span>
+            </h1>
             <ol className="vx-flow" aria-label="Progress">
               {["Upload", "Scan", "Download"].map((label, i) => (
                 <li
@@ -831,7 +839,7 @@ export default function VertexScanner() {
                 <div
                   className="vx-doc-switch"
                   role="tablist"
-                  aria-label="Documents"
+                  aria-label="Pages"
                 >
                   {items.map((it, i) => (
                     <button
@@ -852,7 +860,7 @@ export default function VertexScanner() {
               {!processing && (
                 <button
                   className="vx-remove"
-                  title="Remove document"
+                  title="Remove page"
                   onClick={() => removeItem(selected.id)}
                 >
                   <X size={13} strokeWidth={2} />
@@ -887,15 +895,6 @@ export default function VertexScanner() {
                           ? "Error"
                           : "Preview"}
                   </span>
-                  {selected.state === "done" && (
-                    <button
-                      className="vx-pane-dl"
-                      title="Download this PDF"
-                      onClick={() => downloadOne(selected)}
-                    >
-                      <FileDown size={12} strokeWidth={2} />
-                    </button>
-                  )}
                 </figcaption>
                 <div className="vx-pane-surface">
                   {selected.state === "done" && (
@@ -922,7 +921,7 @@ export default function VertexScanner() {
                       />
                       <p className="vx-state-t">Preview</p>
                       <p className="vx-state-d">
-                        Your cleaned document will appear here after scanning.
+                        Your cleaned page will appear here after scanning.
                       </p>
                     </div>
                   )}
@@ -943,97 +942,112 @@ export default function VertexScanner() {
           </section>
 
           <div className="vx-ws-actions">
-            <span className="vx-ws-status">
-              {phase === "processing" ? (
-                <>
-                  <Loader2 size={14} className="vx-spin" strokeWidth={2} />
-                  Scanning {Math.min(doneCount + 1, items.length)} of{" "}
-                  {items.length}…
-                </>
-              ) : phase === "done" ? (
-                doneCount > 0 ? (
-                  `${doneCount} ${doneCount === 1 ? "document" : "documents"} scanned`
-                ) : (
-                  "Nothing scanned yet"
-                )
-              ) : (
-                `${pendingCount} ${pendingCount === 1 ? "image" : "images"} selected`
-              )}
-            </span>
-
-            <div className="vx-ws-buttons">
-              {phase === "ready" && (
-                <>
-                  <button className="vx-btn vx-btn-tertiary" onClick={reset}>
-                    Clear
-                  </button>
-                  <button
-                    className="vx-btn vx-btn-secondary"
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    Add images
-                  </button>
-                  <button className="vx-btn vx-btn-primary" onClick={scanAll}>
-                    Scan{" "}
-                    {pendingCount > 1
-                      ? `${pendingCount} documents`
-                      : "document"}
-                  </button>
-                </>
-              )}
-              {phase === "done" && (
-                <>
-                  <button className="vx-btn vx-btn-tertiary" onClick={reset}>
-                    Clear
-                  </button>
-                  <button
-                    className="vx-btn vx-btn-secondary"
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    Add images
-                  </button>
-                  {doneCount > 0 && (
-                    <button
-                      className="vx-btn vx-btn-secondary"
-                      onClick={rescanAll}
-                    >
-                      Scan again
-                    </button>
-                  )}
-                  {doneCount === 0 ? (
-                    <button
-                      className="vx-btn vx-btn-primary"
-                      onClick={rescanAll}
-                    >
-                      Try again
-                    </button>
+            <div className="vx-ws-meta">
+              <span className="vx-ws-status" aria-live="polite">
+                {phase === "processing" ? (
+                  <>
+                    <Loader2 size={14} className="vx-spin" strokeWidth={2} />
+                    Scanning {Math.min(doneCount + 1, items.length)} of{" "}
+                    {items.length}…
+                  </>
+                ) : phase === "done" ? (
+                  doneCount > 0 ? (
+                    `${doneCount} ${doneCount === 1 ? "page" : "pages"} scanned`
                   ) : (
-                    <button
-                      className="vx-btn vx-btn-primary vx-btn-download"
-                      onClick={downloadAll}
-                      disabled={downloading}
-                    >
-                      {downloading ? (
-                        <Loader2
-                          size={14}
-                          className="vx-spin"
-                          strokeWidth={2}
-                        />
-                      ) : (
-                        <Download size={14} strokeWidth={2} />
-                      )}
-                      <span>
-                        {downloading
-                          ? "Preparing…"
-                          : doneCount > 1
-                            ? `Download ${doneCount} PDFs`
-                            : "Download PDF"}
-                      </span>
-                    </button>
-                  )}
-                </>
+                    "Nothing scanned yet"
+                  )
+                ) : (
+                  `${pendingCount} ${pendingCount === 1 ? "page" : "pages"} selected`
+                )}
+              </span>
+              {phase === "done" && doneCount > 0 && errorCount > 0 && (
+                <span className="vx-ws-note">
+                  {errorCount} {errorCount === 1 ? "page" : "pages"} couldn't be
+                  scanned and won't be included.
+                </span>
               )}
             </div>
+
+            {phase !== "processing" && (
+              <div className="vx-ws-tools">
+                <button
+                  className="vx-btn vx-btn-secondary"
+                  onClick={() => inputRef.current?.click()}
+                >
+                  Add pages
+                </button>
+                {phase === "done" && doneCount > 0 && (
+                  <button
+                    className="vx-btn vx-btn-secondary"
+                    onClick={rescanAll}
+                  >
+                    Scan again
+                  </button>
+                )}
+              </div>
+            )}
+
+            {phase !== "processing" && (
+              <div className="vx-ws-export">
+                {phase === "ready" && (
+                  <button className="vx-btn vx-btn-primary" onClick={scanAll}>
+                    Scan {pendingCount > 1 ? `${pendingCount} pages` : "page"}
+                  </button>
+                )}
+                {phase === "done" && doneCount === 0 && (
+                  <button className="vx-btn vx-btn-primary" onClick={rescanAll}>
+                    Try again
+                  </button>
+                )}
+                {phase === "done" && doneCount > 1 && (
+                  <div
+                    className="vx-seg"
+                    role="radiogroup"
+                    aria-label="Download as"
+                  >
+                    {[
+                      ["merged", "One PDF"],
+                      ["separate", "Separate PDFs"],
+                    ].map(([value, label]) => (
+                      <label
+                        key={value}
+                        className={`vx-seg-opt ${exportMode === value ? "on" : ""}`}
+                      >
+                        <input
+                          type="radio"
+                          name="vx-export"
+                          value={value}
+                          checked={exportMode === value}
+                          disabled={downloading}
+                          onChange={() => setExportMode(value)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {phase === "done" && doneCount > 0 && (
+                  <button
+                    className="vx-btn vx-btn-primary vx-btn-download"
+                    onClick={exportSeparate ? downloadSeparate : downloadAll}
+                    disabled={downloading}
+                  >
+                    {downloading ? (
+                      <Loader2 size={14} className="vx-spin" strokeWidth={2} />
+                    ) : (
+                      <Download size={14} strokeWidth={2} />
+                    )}
+                    <span>
+                      {downloading
+                        ? "Preparing…"
+                        : exportSeparate
+                          ? `Download ${doneCount} PDFs (.zip)`
+                          : "Download PDF"}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </main>
       )}
@@ -1172,12 +1186,8 @@ const CSS = `
 
 .vx-ws-bar{display:flex; align-items:center; justify-content:space-between; gap:16px;
   padding-bottom:12px; margin-bottom:clamp(16px,2.4vw,24px); border-bottom:1px solid var(--border);}
-.vx-chrome-back{display:inline-flex; align-items:baseline; gap:7px; background:none; border:0; cursor:pointer; color:var(--text-2); font-family:inherit; font-size:12.5px; font-weight:600; padding:2px 0; letter-spacing:-.005em; transition:color .12s ease;}
-.vx-chrome-back svg{align-self:center; color:var(--faint); transition:color .12s ease, transform .12s ease;}
-.vx-chrome-back:hover{color:var(--text);}
-.vx-chrome-back:hover svg{color:var(--text-2); transform:translateX(-1px);}
-.vx-chrome-back:focus-visible{outline:none; box-shadow:var(--ring); border-radius:var(--radius);}
-.vx-chrome-count{font-size:11.5px; font-weight:400; color:var(--faint);}
+.vx-ws-title{display:inline-flex; align-items:baseline; gap:7px; margin:0; padding:2px 0; color:var(--text-2); font-size:12.5px; font-weight:600; line-height:1.5; letter-spacing:-.005em;}
+.vx-ws-title-count{font-size:11.5px; font-weight:400; color:var(--faint); font-variant-numeric:tabular-nums;}
 
 .vx-flow{display:flex; align-items:center; gap:7px; list-style:none; margin:0; padding:0; flex:none;}
 .vx-flow-step{display:inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; color:var(--faint); transition:color .12s ease;}
@@ -1210,9 +1220,6 @@ const CSS = `
 .vx-pane{margin:0; min-width:0;}
 .vx-pane-label{display:flex; align-items:center; gap:5px; min-height:22px; margin-bottom:8px; font-size:10.5px; font-weight:600; color:var(--faint); letter-spacing:.06em; text-transform:uppercase;}
 .vx-scanned{color:var(--accent); font-weight:600;}
-.vx-pane-dl{margin-left:auto; display:grid; place-items:center; width:22px; height:22px; border:0; background:none; border-radius:4px; color:var(--faint); cursor:pointer; opacity:.7; transition:opacity .12s ease, color .12s ease, background .12s ease;}
-.vx-pane-dl:hover{opacity:1; color:var(--accent); background:rgba(11,110,82,.08);}
-.vx-pane-dl:focus-visible{outline:none; opacity:1; box-shadow:var(--ring);}
 .vx-pane-surface{position:relative; display:flex; align-items:center; justify-content:center;
   height:clamp(340px,54vh,600px); padding:12px; background:var(--surface);
   border:1px solid var(--border); border-radius:var(--radius-lg);}
@@ -1226,10 +1233,24 @@ const CSS = `
 .vx-state-d{margin:5px 0 0; font-size:12.5px; line-height:1.55; color:var(--muted);}
 .vx-state .vx-btn{margin-top:16px;}
 
-.vx-ws-actions{position:sticky; bottom:0; z-index:20; display:flex; align-items:center; gap:14px;
+.vx-ws-actions{position:sticky; bottom:0; z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:14px;
   margin-top:clamp(16px,2.4vw,24px); padding:12px 0; background:var(--bg); border-top:1px solid var(--border);}
+.vx-ws-meta{display:flex; flex-direction:column; gap:2px; min-width:0;}
 .vx-ws-status{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--text-2); font-variant-numeric:tabular-nums;}
-.vx-ws-buttons{display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end;}
+.vx-ws-note{font-size:12px; line-height:1.4; color:var(--muted);}
+.vx-ws-tools{display:flex; align-items:center; gap:8px;}
+.vx-ws-export{display:flex; align-items:center; gap:8px; margin-left:auto;}
+
+.vx-seg{display:inline-flex; align-items:stretch; height:32px; padding:2px; gap:2px; background:var(--panel); border:1px solid var(--border); border-radius:6px;}
+.vx-seg-opt{position:relative; display:inline-flex; align-items:center; justify-content:center; padding:0 10px; border-radius:4px;
+  font-size:12.5px; font-weight:500; letter-spacing:-.003em; line-height:1; color:var(--muted); white-space:nowrap; cursor:pointer; user-select:none;
+  transition:color .12s ease, background .12s ease;}
+.vx-seg-opt input{position:absolute; width:1px; height:1px; margin:0; opacity:0; pointer-events:none;}
+.vx-seg-opt:hover{color:var(--text);}
+.vx-seg-opt.on{color:var(--text); background:var(--surface); box-shadow:0 0 0 1px var(--border-2);}
+.vx-seg-opt:has(input:focus-visible){box-shadow:var(--ring);}
+.vx-seg-opt.on:has(input:focus-visible){box-shadow:0 0 0 1px var(--border-2), var(--ring);}
+.vx-seg-opt:has(input:disabled){opacity:.5; cursor:default;}
 
 .vx-btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 13px; font-family:inherit; font-size:12.5px; font-weight:500; letter-spacing:-.003em; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background .12s ease, border-color .12s ease, color .12s ease;}
 .vx-btn:focus-visible{outline:none; box-shadow:var(--ring);}
@@ -1239,8 +1260,6 @@ const CSS = `
 .vx-btn-secondary{background:none; color:var(--muted); border-color:var(--border-2);}
 .vx-btn-secondary:hover{border-color:var(--faint); color:var(--text);}
 .vx-btn-secondary:disabled{opacity:.5; cursor:default;}
-.vx-btn-tertiary{background:none; color:var(--faint); padding:0 6px;}
-.vx-btn-tertiary:hover{color:var(--text);}
 .vx-btn-download{gap:7px;}
 .vx-spin{animation:vx-rot .8s linear infinite; color:var(--accent);}
 @keyframes vx-rot{to{transform:rotate(360deg);}}
@@ -1250,9 +1269,10 @@ const CSS = `
 }
 @media (max-width:620px){
   .vx-ws-actions{flex-direction:column; align-items:stretch; gap:10px;}
-  .vx-ws-buttons{margin-left:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:8px;}
-  .vx-ws-buttons .vx-btn-primary{grid-column:1 / -1; order:-1;}
-  .vx-ws-buttons .vx-btn-tertiary{order:9;}
+  .vx-ws-export{order:1; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr); gap:8px;}
+  .vx-ws-tools{order:2; display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:8px;}
+  .vx-seg{height:40px;}
+  .vx-seg-opt{flex:1 1 0; font-size:13px;}
   .vx-btn{height:40px; padding:0 15px; font-size:13px;}
   .vx-pane-surface{height:clamp(300px,44vh,400px);}
 }
@@ -1269,7 +1289,6 @@ const CSS = `
 
 @media (max-width:560px){
   .vx-actions .vx-btn{flex:1 1 auto;}
-  .vx-btn-tertiary{flex-basis:100%;}
   .vx-footer-in{justify-content:flex-start;}
 }
 @media (prefers-reduced-motion:reduce){ .vx-spin{animation-duration:1.6s;} .vx-skel{animation:none;} .vx-btn,.vx-link,.vx-drop{transition:none;} }
