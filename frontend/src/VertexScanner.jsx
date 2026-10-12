@@ -467,7 +467,14 @@ export default function VertexScanner() {
   const [exportMode, setExportMode] = useState("merged");
   const [selectedId, setSelectedId] = useState(null);
   const [rescanTick, setRescanTick] = useState(0);
+  const [moveMsg, setMoveMsg] = useState("");
   const inputRef = useRef(null);
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
+  const settling = useRef(false);
+  const stripRef = useRef(null);
+  const thumbRefs = useRef(new Map());
+  const focusAfterMove = useRef(null);
 
   const patch = useCallback((id, next) => {
     setItems((prev) =>
@@ -514,6 +521,129 @@ export default function VertexScanner() {
       return prev.filter((i) => i.id !== id);
     });
   }, []);
+
+  const moveTo = useCallback((id, to) => {
+    const from = itemsRef.current.findIndex((i) => i.id === id);
+    if (from < 0 || to < 0 || to >= itemsRef.current.length || to === from)
+      return;
+    setItems((prev) => {
+      const at = prev.findIndex((i) => i.id === id);
+      if (at < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      next.splice(to, 0, next.splice(at, 1)[0]);
+      return next;
+    });
+    setSelectedId(id);
+    setMoveMsg(`Page ${from + 1} moved to position ${to + 1}`);
+  }, []);
+
+  const endGesture = useCallback(() => {
+    const d = dragRef.current;
+    if (!d) return;
+    clearTimeout(d.timer);
+    window.removeEventListener("pointermove", d.onMove);
+    window.removeEventListener("pointerup", d.onUp);
+    window.removeEventListener("pointercancel", d.onCancel);
+    dragRef.current = null;
+  }, []);
+
+  const startGesture = useCallback(
+    (e, id, from) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if (settling.current) return;
+      endGesture();
+      const strip = stripRef.current;
+      const touch = e.pointerType !== "mouse";
+      const d = {
+        id,
+        from,
+        to: from,
+        x0: e.clientX,
+        y0: e.clientY,
+        scroll0: strip.scrollLeft,
+        pointerId: e.pointerId,
+        active: false,
+        timer: null,
+        slot: 66,
+      };
+
+      const pickUp = () => {
+        const thumbs = strip.querySelectorAll(".vx-thumb");
+        if (thumbs.length > 1)
+          d.slot = thumbs[1].offsetLeft - thumbs[0].offsetLeft;
+        d.active = true;
+        setDrag({ id, from, to: from, dx: 0, slot: d.slot });
+      };
+
+      const update = (x) => {
+        const r = strip.getBoundingClientRect();
+        if (x < r.left + 28) strip.scrollLeft -= 8;
+        else if (x > r.right - 28) strip.scrollLeft += 8;
+        const dx = x - d.x0 + strip.scrollLeft - d.scroll0;
+        const n = itemsRef.current.length;
+        d.to = Math.max(0, Math.min(n - 1, from + Math.round(dx / d.slot)));
+        setDrag({ id, from, to: d.to, dx, slot: d.slot });
+      };
+
+      d.onMove = (ev) => {
+        if (ev.pointerId !== d.pointerId) return;
+        const mx = ev.clientX - d.x0;
+        const my = ev.clientY - d.y0;
+        if (!d.active) {
+          if (touch) {
+            if (Math.hypot(mx, my) > 8) endGesture();
+            return;
+          }
+          if (Math.hypot(mx, my) < 4) return;
+          pickUp();
+        }
+        update(ev.clientX);
+      };
+      d.onUp = (ev) => {
+        if (ev.pointerId !== d.pointerId) return;
+        if (d.active) {
+          settling.current = true;
+          setDrag((prev) => prev && { ...prev, dropped: true });
+          setTimeout(() => {
+            moveTo(id, d.to);
+            setDrag(null);
+            settling.current = false;
+          }, 140);
+        }
+        endGesture();
+      };
+      d.onCancel = (ev) => {
+        if (ev.pointerId !== d.pointerId) return;
+        setDrag(null);
+        endGesture();
+      };
+
+      if (touch) d.timer = setTimeout(pickUp, 350);
+      dragRef.current = d;
+      window.addEventListener("pointermove", d.onMove);
+      window.addEventListener("pointerup", d.onUp);
+      window.addEventListener("pointercancel", d.onCancel);
+    },
+    [endGesture, moveTo],
+  );
+
+  useEffect(() => {
+    const block = (e) => {
+      if (dragRef.current?.active) e.preventDefault();
+    };
+    document.addEventListener("touchmove", block, { passive: false });
+    return () => {
+      document.removeEventListener("touchmove", block);
+      endGesture();
+    };
+  }, [endGesture]);
+
+  useEffect(() => {
+    const id = focusAfterMove.current;
+    if (id == null) return;
+    focusAfterMove.current = null;
+    thumbRefs.current.get(id)?.focus();
+  }, [items]);
 
   const onDrop = useCallback(
     (e) => {
@@ -673,7 +803,7 @@ export default function VertexScanner() {
             Vertex
           </button>
           <nav className="vx-nav-r">
-            {view === "landing" && (
+            {view === "landing" ? (
               <>
                 <a className="vx-link" href="#how" onClick={scrollToId("how")}>
                   How it works
@@ -686,6 +816,10 @@ export default function VertexScanner() {
                   Features
                 </a>
               </>
+            ) : (
+              <button className="vx-link" onClick={reset}>
+                Start over
+              </button>
             )}
             <a
               className="vx-link vx-link-icon"
@@ -807,7 +941,9 @@ export default function VertexScanner() {
           <div className="vx-ws-bar">
             <h1 className="vx-ws-title">
               Pages
-              <span className="vx-ws-title-count">{items.length} total</span>
+              {items.length > 1 && (
+                <span className="vx-ws-hint">Press and hold to reorder</span>
+              )}
             </h1>
             <ol className="vx-flow" aria-label="Progress">
               {["Upload", "Scan", "Download"].map((label, i) => (
@@ -820,6 +956,99 @@ export default function VertexScanner() {
               ))}
             </ol>
           </div>
+
+          {items.length > 1 && (
+            <div
+              ref={stripRef}
+              className={`vx-strip ${drag ? (drag.dropped ? "is-dropping" : "is-dragging") : ""}`}
+              role="group"
+              aria-label="Pages"
+            >
+              {items.map((it, i) => {
+                const on = it.id === selected.id;
+                const lifted = drag?.id === it.id;
+                let shift = 0;
+                if (drag && !lifted) {
+                  if (drag.from < drag.to && i > drag.from && i <= drag.to)
+                    shift = -drag.slot;
+                  else if (drag.to < drag.from && i >= drag.to && i < drag.from)
+                    shift = drag.slot;
+                }
+                return (
+                  <div
+                    key={it.id}
+                    className={`vx-thumb ${on ? "on" : ""} ${lifted ? "is-lifted" : ""}`}
+                    style={
+                      lifted
+                        ? {
+                            transform: drag.dropped
+                              ? `translateX(${(drag.to - drag.from) * drag.slot}px)`
+                              : `translate(${drag.dx}px, -3px)`,
+                          }
+                        : shift
+                          ? { transform: `translateX(${shift}px)` }
+                          : undefined
+                    }
+                    onPointerDown={(e) => startGesture(e, it.id, i)}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <button
+                      ref={(el) => {
+                        if (el) thumbRefs.current.set(it.id, el);
+                        else thumbRefs.current.delete(it.id);
+                      }}
+                      className="vx-thumb-btn"
+                      aria-current={on ? "true" : undefined}
+                      aria-label={`Page ${i + 1}`}
+                      aria-describedby="vx-reorder-help"
+                      title={`Page ${i + 1} · ${it.name}`}
+                      onClick={() => setSelectedId(it.id)}
+                      onKeyDown={(e) => {
+                        if (!e.altKey) return;
+                        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight")
+                          return;
+                        e.preventDefault();
+                        focusAfterMove.current = it.id;
+                        moveTo(it.id, i + (e.key === "ArrowLeft" ? -1 : 1));
+                      }}
+                    >
+                      <img
+                        src={it.resultUrl || it.originalUrl}
+                        alt=""
+                        draggable={false}
+                      />
+                      {it.state === "processing" && (
+                        <span className="vx-thumb-busy">
+                          <Loader2
+                            size={14}
+                            className="vx-spin"
+                            strokeWidth={2}
+                          />
+                        </span>
+                      )}
+                      <span
+                        className={`vx-thumb-n ${
+                          it.state === "done"
+                            ? "ok"
+                            : it.state === "error"
+                              ? "err"
+                              : ""
+                        }`}
+                      >
+                        {i + 1}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <span id="vx-reorder-help" className="vx-sr">
+            Alt plus arrow keys to move this page.
+          </span>
+          <span className="vx-sr" aria-live="polite">
+            {moveMsg}
+          </span>
 
           <section className="vx-ws">
             <header className="vx-doc-head">
@@ -835,28 +1064,6 @@ export default function VertexScanner() {
                   {(selected.name.split(".").pop() || "").toUpperCase()}
                 </span>
               </div>
-              {items.length > 1 && (
-                <div
-                  className="vx-doc-switch"
-                  role="tablist"
-                  aria-label="Pages"
-                >
-                  {items.map((it, i) => (
-                    <button
-                      key={it.id}
-                      role="tab"
-                      aria-selected={it.id === selected.id}
-                      title={it.name}
-                      className={`vx-chip ${it.id === selected.id ? "on" : ""} ${
-                        it.state === "done" ? "ok" : ""
-                      }`}
-                      onClick={() => setSelectedId(it.id)}
-                    >
-                      {i + 1}
-                    </button>
-                  ))}
-                </div>
-              )}
               {!processing && (
                 <button
                   className="vx-remove"
@@ -1133,7 +1340,7 @@ const CSS = `
 @media (max-width:560px){ .vx-nav-r .vx-link:not(.vx-link-icon){display:none;} }
 
 .vx-main{flex:1; width:100%; max-width:1040px; margin:0 auto; padding:clamp(36px,6vw,68px) clamp(16px,4vw,32px) clamp(48px,6vw,72px);}
-.vx-main-ws{max-width:1180px; padding-top:clamp(16px,2.4vw,22px); padding-bottom:32px;}
+.vx-main-ws{max-width:1040px; padding-top:clamp(16px,2.4vw,22px); padding-bottom:32px;}
 
 .vx-top{display:grid; grid-template-columns:minmax(0,1fr); gap:clamp(28px,4vw,40px); margin-bottom:clamp(30px,4.5vw,48px);}
 @media (min-width:900px){
@@ -1187,7 +1394,6 @@ const CSS = `
 .vx-ws-bar{display:flex; align-items:center; justify-content:space-between; gap:16px;
   padding-bottom:12px; margin-bottom:clamp(16px,2.4vw,24px); border-bottom:1px solid var(--border);}
 .vx-ws-title{display:inline-flex; align-items:baseline; gap:7px; margin:0; padding:2px 0; color:var(--text-2); font-size:12.5px; font-weight:600; line-height:1.5; letter-spacing:-.005em;}
-.vx-ws-title-count{font-size:11.5px; font-weight:400; color:var(--faint); font-variant-numeric:tabular-nums;}
 
 .vx-flow{display:flex; align-items:center; gap:7px; list-style:none; margin:0; padding:0; flex:none;}
 .vx-flow-step{display:inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; color:var(--faint); transition:color .12s ease;}
@@ -1197,19 +1403,37 @@ const CSS = `
 @media (max-width:620px){ .vx-flow{display:none;} }
 
 .vx-ws{min-width:0;}
-.vx-doc-head{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
-.vx-doc-meta{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px;}
+.vx-doc-head{display:flex; align-items:center; gap:8px; margin-bottom:12px;}
+.vx-doc-meta{flex:0 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px;}
 .vx-doc-name{font-size:14px; font-weight:600; line-height:1.35; color:var(--text); letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .vx-doc-sub{font-size:12px; line-height:1.35; color:var(--muted); font-variant-numeric:tabular-nums;}
-.vx-doc-switch{display:flex; align-items:center; gap:6px; flex:none;}
-.vx-chip{width:26px; height:26px; line-height:1; display:grid; place-items:center; font-family:inherit; font-size:11.5px; font-weight:600;
-  font-variant-numeric:tabular-nums; color:var(--muted); background:none; border:1px solid var(--border-2);
-  border-radius:4px; cursor:pointer; transition:color .12s ease, border-color .12s ease, background .12s ease;}
-.vx-chip:hover{color:var(--text); border-color:var(--faint);}
-.vx-chip:focus-visible{outline:none; box-shadow:var(--ring);}
-.vx-chip.ok{color:var(--accent); border-color:rgba(11,110,82,.35);}
-.vx-chip.on{color:#fff; background:var(--text-2); border-color:var(--text-2); box-shadow:0 0 0 3px rgba(24,24,27,.07);}
-.vx-chip.on.ok{background:var(--accent); border-color:var(--accent);}
+.vx-sr{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
+.vx-ws-hint{display:none; font-size:11.5px; font-weight:400; color:var(--faint);}
+@media (pointer:coarse){ .vx-ws-hint{display:inline;} }
+
+.vx-strip{display:flex; align-items:flex-start; gap:10px; overflow-x:auto; padding:6px 3px 10px; margin:-3px -3px clamp(8px,1.4vw,12px); scrollbar-width:thin;}
+.vx-thumb{position:relative; flex:none; width:56px; height:72px; touch-action:manipulation;
+  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;}
+.vx-strip.is-dragging .vx-thumb{transition:transform .16s ease;}
+.vx-strip.is-dragging .vx-thumb.is-lifted{z-index:2; transition:none;}
+.vx-strip.is-dropping .vx-thumb.is-lifted{z-index:2; transition:transform .12s ease;}
+.vx-strip.is-dragging, .vx-strip.is-dragging .vx-thumb-btn{cursor:grabbing;}
+.vx-thumb-btn{position:relative; display:block; width:100%; height:100%; padding:0; overflow:hidden; font-family:inherit;
+  background:var(--surface); border:1px solid var(--border-2); border-radius:4px; cursor:grab;
+  transition:border-color .12s ease, box-shadow .12s ease; -webkit-tap-highlight-color:transparent;}
+.vx-thumb-btn:hover{border-color:var(--faint); box-shadow:0 1px 2px rgba(16,16,20,.05);}
+.vx-thumb-btn:focus-visible{outline:none; box-shadow:var(--ring);}
+.vx-thumb.on .vx-thumb-btn{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
+.vx-thumb.on .vx-thumb-btn:focus-visible{box-shadow:0 0 0 1px var(--accent), var(--ring);}
+.vx-thumb.is-lifted .vx-thumb-btn{box-shadow:0 4px 12px rgba(16,16,20,.14);}
+.vx-thumb.on.is-lifted .vx-thumb-btn{box-shadow:0 0 0 1px var(--accent), 0 4px 12px rgba(16,16,20,.14);}
+.vx-thumb-btn img{display:block; width:100%; height:100%; object-fit:cover; pointer-events:none;}
+.vx-thumb-busy{position:absolute; inset:0; display:grid; place-items:center; background:color-mix(in srgb, var(--surface) 65%, transparent);}
+.vx-thumb-n{position:absolute; left:3px; bottom:3px; min-width:16px; height:16px; padding:0 4px; display:grid; place-items:center;
+  font-size:10.5px; font-weight:600; line-height:1; font-variant-numeric:tabular-nums; color:var(--text-2);
+  background:var(--surface); border:1px solid var(--border); border-radius:3px;}
+.vx-thumb-n.ok{color:var(--accent);}
+.vx-thumb-n.err{color:var(--danger);}
 .vx-doc-head .vx-remove{margin-left:0;}
 .vx-remove{display:grid; place-items:center; width:24px; height:24px; cursor:pointer; background:none; border:0; border-radius:4px; color:var(--faint); opacity:.6; transition:opacity .12s ease, color .12s ease, background .12s ease; flex:none;}
 .vx-remove:hover{opacity:1; color:var(--danger); background:var(--danger-soft);}
