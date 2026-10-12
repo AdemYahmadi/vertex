@@ -106,9 +106,9 @@ async def scan(
             "No document detected. Try a photo with the whole page visible "
             "against a contrasting background.",
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Pipeline error")
-        raise HTTPException(500, f"Processing failed: {e}")
+        raise HTTPException(500, "Processing failed. Please try again.")
 
     ok, buf = cv2.imencode(".png" if fmt == "png" else ".jpg", result)
     if not ok:
