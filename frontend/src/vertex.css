@@ -178,6 +178,7 @@
   line-height: var(--lh-body);
   color: var(--ink);
   background: var(--bg);
+  overflow-x: clip;
 }
 .vx *,
 .vx *::before,
@@ -1410,10 +1411,22 @@
   margin-top: var(--sp-6);
   padding: var(--sp-4) 0 calc(var(--sp-4) + env(safe-area-inset-bottom));
   background: var(--surface);
-  box-shadow:
-    0 0 0 100vmax var(--surface),
-    0 -1px 0 100vmax var(--rule);
-  clip-path: inset(-1px -100vmax 0 -100vmax);
+  isolation: isolate;
+}
+.vx-ws-actions::before,
+.vx-ws-export::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  z-index: -1;
+  width: 100vw;
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.vx-ws-export::before {
+  display: none;
 }
 .vx-ws-meta {
   display: flex;
@@ -1677,10 +1690,13 @@
     margin-top: var(--sp-4);
     padding: var(--sp-3) 0 calc(var(--sp-3) + env(safe-area-inset-bottom));
     background: var(--surface);
-    box-shadow:
-      0 0 0 100vmax var(--surface),
-      0 -1px 0 100vmax var(--rule);
-    clip-path: inset(-1px -100vmax 0 -100vmax);
+    isolation: isolate;
+  }
+  .vx-ws-actions:not(.is-busy)::before {
+    display: none;
+  }
+  .vx-ws-actions:not(.is-busy) > .vx-ws-export::before {
+    display: block;
   }
   .vx-ws-actions:not(.is-busy) > .vx-ws-export:empty {
     display: none;
