@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import "./vertex.css";
 import {
   UploadCloud,
   ScanLine,
@@ -7,9 +8,16 @@ import {
   Crop,
   ShieldCheck,
   Loader2,
-  X,
   AlertCircle,
   RotateCwSquare,
+  ArrowDown,
+  GripVertical,
+  TriangleAlert,
+  Trash2,
+  Check,
+  Plus,
+  RefreshCw,
+  ArrowRight,
 } from "lucide-react";
 
 const GitHubIcon = ({ size = 14 }) => (
@@ -30,7 +38,7 @@ const VertexMark = ({ size = 22 }) => (
     width={size}
     height={size}
     viewBox="0 0 64 64"
-    fill="var(--accent)"
+    fill="var(--primary)"
     aria-hidden="true"
   >
     <path d="M24.84 61.4 L33.14 53.92 L30.25 42.33 L21.95 49.81 Z" />
@@ -39,9 +47,50 @@ const VertexMark = ({ size = 22 }) => (
   </svg>
 );
 
+const DropArt = () => (
+  <svg
+    className="vx-drop-art"
+    viewBox="0 0 240 120"
+    width="240"
+    height="120"
+    aria-hidden="true"
+  >
+    <rect className="vx-art-desk" x="6" y="12" width="96" height="96" rx="6" />
+    <path className="vx-art-paper" d="M24 28 L88 20 L84 100 L28 104 Z" />
+    <path
+      className="vx-art-line"
+      d="M36 40 L76 35 M36 50 L77 45 M35 60 L76 55 M35 70 L75 65 M34 80 L62 77"
+    />
+    <path className="vx-art-arrow" d="M114 60 H134 M128 53 L135 60 L128 67" />
+    <rect
+      className="vx-art-shadow"
+      x="155"
+      y="16"
+      width="70"
+      height="96"
+      rx="2"
+    />
+    <g>
+      <rect
+        className="vx-art-sheet"
+        x="152"
+        y="12"
+        width="70"
+        height="96"
+        rx="2"
+      />
+    </g>
+    <path
+      className="vx-art-text"
+      d="M162 30 H196 M162 42 H212 M162 52 H212 M162 62 H208 M162 72 H212 M162 82 H190"
+    />
+  </svg>
+);
+
 const USE_MOCK = false;
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/scan";
-const MAX_SIDE = import.meta.env.DEV ? 0 : 1800;
+const HOSTED_MAX_SIDE = 1800;
+const MAX_SIDE = import.meta.env.DEV ? 0 : HOSTED_MAX_SIDE;
 const IS_HOSTED = import.meta.env.VITE_HOSTED === "true";
 
 const HEALTH_URL = (() => {
@@ -432,17 +481,17 @@ const HOW = [
   {
     icon: UploadCloud,
     t: "Upload",
-    d: "Drop one or more photos of your documents — any angle, any lighting.",
+    d: "Add one or more photos. Any angle, any lighting.",
   },
   {
     icon: ScanLine,
     t: "Scan",
-    d: "Vertex detects each page, corrects the perspective, and cleans the image.",
+    d: "Vertex finds each page, straightens it and cleans it up.",
   },
   {
     icon: Download,
     t: "Download",
-    d: "Export a single PDF, or a whole batch bundled into one folder.",
+    d: "Get one combined PDF, or separate PDFs in a single .zip.",
   },
 ];
 
@@ -450,17 +499,17 @@ const FEATURES = [
   {
     icon: Layers,
     t: "Reliable detection",
-    d: "A deep-learning model finds the page against cluttered backgrounds and uneven lighting, where classic edge detection breaks down.",
+    d: "A deep-learning model finds the page on cluttered backgrounds and in uneven light, where classic edge detection fails.",
   },
   {
     icon: Crop,
     t: "Accurate flattening",
-    d: "Perspective correction warps any angle or paper size into a clean, upright rectangle, then sharpens the ink for legibility.",
+    d: "Perspective correction turns any angle or paper size into an upright rectangle, then sharpens the ink.",
   },
   {
     icon: ShieldCheck,
     t: "Private by default",
-    d: "Photos are processed in memory and discarded as soon as the scan returns. PDFs are assembled locally in your browser, and nothing is stored on a server.",
+    d: "Photos are processed in memory and discarded once the scan returns. PDFs are built in your browser. Nothing is stored on a server.",
   },
 ];
 
@@ -473,6 +522,7 @@ export default function VertexScanner() {
   const [selectedId, setSelectedId] = useState(null);
   const [rescanTick, setRescanTick] = useState(0);
   const [moveMsg, setMoveMsg] = useState("");
+  const [notice, setNotice] = useState("");
   const inputRef = useRef(null);
   const [drag, setDrag] = useState(null);
   const dragRef = useRef(null);
@@ -489,8 +539,23 @@ export default function VertexScanner() {
 
   const addFiles = useCallback(
     (fileList) => {
-      const files = Array.from(fileList || []).filter((f) =>
-        ACCEPT.includes(f.type),
+      const all = Array.from(fileList || []);
+      const files = all.filter((f) => ACCEPT.includes(f.type));
+      const skipped = all.filter((f) => !ACCEPT.includes(f.type));
+      setNotice(
+        skipped.length
+          ? `${
+              skipped.length === 1
+                ? `${skipped[0].name} isn't a JPG or PNG, so it wasn't added.`
+                : `${skipped.length} files aren't JPG or PNG, so they weren't added.`
+            }${
+              skipped.some(
+                (f) => /\.hei[cf]$/i.test(f.name) || /hei[cf]/.test(f.type),
+              )
+                ? " Convert HEIC photos to JPG first, or set iPhone Settings → Camera → Formats → Most Compatible."
+                : ""
+            }`
+          : "",
       );
       if (!files.length) return;
       if (!USE_MOCK) wakeApi();
@@ -515,6 +580,8 @@ export default function VertexScanner() {
         };
       });
       setItems((prev) => [...prev, ...created]);
+      if (itemsRef.current.length)
+        setSelectedId(created[created.length - 1].id);
     },
     [patch],
   );
@@ -674,6 +741,22 @@ export default function VertexScanner() {
   }, [endGesture]);
 
   useEffect(() => {
+    const strip = stripRef.current;
+    const thumb = thumbRefs.current.get(selectedId)?.parentElement;
+    if (!strip || !thumb) return;
+    const left = thumb.offsetLeft;
+    const right = left + thumb.offsetWidth;
+    const pad = 8;
+    if (left - pad < strip.scrollLeft)
+      strip.scrollTo({ left: left - pad, behavior: "smooth" });
+    else if (right + pad > strip.scrollLeft + strip.clientWidth)
+      strip.scrollTo({
+        left: right + pad - strip.clientWidth,
+        behavior: "smooth",
+      });
+  }, [selectedId, items.length]);
+
+  useEffect(() => {
     const id = focusAfterMove.current;
     if (id == null) return;
     focusAfterMove.current = null;
@@ -766,6 +849,7 @@ export default function VertexScanner() {
 
   const reset = useCallback(() => {
     spins.current.clear();
+    setNotice("");
     setItems((prev) => {
       revokeUrls(prev);
       return [];
@@ -789,16 +873,23 @@ export default function VertexScanner() {
   const selected = items.find((i) => i.id === selectedId) || items[0] || null;
   const angleOf = (it) => spins.current.get(it.id) ?? it.rotation;
 
+  const fitBox = (w, h) => {
+    if (!surface || !w || !h) return undefined;
+    const k = Math.min(surface.w / w, surface.h / h);
+    return { width: Math.round(w * k), height: Math.round(h * k) };
+  };
+  const originalBox = fitBox(selected?.dims?.w, selected?.dims?.h);
+  const resultBox =
+    resultSize && resultSize.url === selected?.resultUrl
+      ? fitBox(resultSize.w, resultSize.h)
+      : undefined;
   let resultScale = 1;
-  if (
-    selected?.rotation % 180 &&
-    surface &&
-    resultSize?.url === selected.resultUrl
-  ) {
-    const fit = Math.min(1, surface.w / resultSize.w, surface.h / resultSize.h);
-    const dw = resultSize.w * fit;
-    const dh = resultSize.h * fit;
-    resultScale = Math.min(1, surface.w / dh, surface.h / dw);
+  if (selected?.rotation % 180 && resultBox) {
+    resultScale = Math.min(
+      1,
+      surface.w / resultBox.height,
+      surface.h / resultBox.width,
+    );
   }
 
   const canRotate = selected?.state === "done";
@@ -807,7 +898,7 @@ export default function VertexScanner() {
     if (selectedIdForKeys == null) return;
     const onKey = (e) => {
       if (e.key !== "r" && e.key !== "R") return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
@@ -841,6 +932,58 @@ export default function VertexScanner() {
     window.scrollTo({ top: 0 });
   }, [view]);
 
+  const keysId = view === "workspace" && selected ? selected.id : null;
+  useEffect(() => {
+    if (keysId == null) return;
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      )
+        return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const list = itemsRef.current;
+        const next =
+          list.findIndex((i) => i.id === keysId) +
+          (e.key === "ArrowLeft" ? -1 : 1);
+        if (next < 0 || next >= list.length) return;
+        e.preventDefault();
+        const id = list[next].id;
+        setSelectedId(id);
+        if (stripRef.current?.contains(document.activeElement))
+          thumbRefs.current.get(id)?.focus();
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        !e.repeat &&
+        !processing
+      ) {
+        e.preventDefault();
+        removeItem(keysId);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keysId, processing, removeItem]);
+
+  const [activeSec, setActiveSec] = useState("");
+  useEffect(() => {
+    if (view !== "landing") return;
+    const ids = ["top", "how", "features"];
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const en of entries)
+          if (en.isIntersecting)
+            setActiveSec(en.target.id === "top" ? "" : en.target.id);
+      },
+      { rootMargin: "-45% 0px -50% 0px" },
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [view]);
+
   const doneCount = items.filter((i) => i.state === "done").length;
   const pendingCount = items.filter((i) => i.state === "pending").length;
   const errorCount = items.filter((i) => i.state === "error").length;
@@ -852,6 +995,9 @@ export default function VertexScanner() {
       : "ready";
   const stepIndex = phase === "done" && doneCount > 0 ? 2 : 1;
   const year = new Date().getFullYear();
+  const progress = items.length
+    ? Math.min(doneCount, items.length) / items.length
+    : 0;
 
   const scrollToId = (id) => (e) => {
     e.preventDefault();
@@ -860,33 +1006,37 @@ export default function VertexScanner() {
 
   return (
     <div className="vx">
-      <style>{CSS}</style>
-
       <header className="vx-nav">
-        <div className="vx-nav-in">
+        <div className="vx-wrap vx-nav-in">
           <button
             className="vx-brand"
             onClick={view === "workspace" ? reset : undefined}
           >
-            <VertexMark size={25} />
+            <VertexMark size={26} />
             Vertex
           </button>
           <nav className="vx-nav-r">
             {view === "landing" ? (
               <>
-                <a className="vx-link" href="#how" onClick={scrollToId("how")}>
+                <a
+                  className="vx-link"
+                  href="#how"
+                  aria-current={activeSec === "how" ? "true" : undefined}
+                  onClick={scrollToId("how")}
+                >
                   How it works
                 </a>
                 <a
                   className="vx-link"
                   href="#features"
+                  aria-current={activeSec === "features" ? "true" : undefined}
                   onClick={scrollToId("features")}
                 >
                   Features
                 </a>
               </>
             ) : (
-              <button className="vx-link" onClick={reset}>
+              <button className="vx-link vx-link-keep" onClick={reset}>
                 Start over
               </button>
             )}
@@ -896,26 +1046,31 @@ export default function VertexScanner() {
               target="_blank"
               rel="noreferrer"
             >
-              <GitHubIcon /> GitHub
+              <GitHubIcon size={16} /> GitHub
             </a>
           </nav>
         </div>
       </header>
 
       {view === "landing" && (
-        <main className="vx-main">
-          <div className="vx-top">
+        <main className="vx-main vx-wrap">
+          <div className="vx-top" id="top">
             <section className="vx-hero">
               <p className="vx-kicker">Document scanner</p>
               <h1 className="vx-h1">
-                Turn photos of paper into scanner-quality PDFs.
+                Photos of paper in.{" "}
+                <span className="vx-h1-accent">Scanner‑quality PDFs out.</span>
               </h1>
               <p className="vx-lead">
-                Vertex detects the document in a photo, corrects the
-                perspective, cleans the lighting, and exports a crisp PDF. It
-                handles complex backgrounds and any paper size, and never keeps
-                a copy of your files.
+                Vertex finds the page in your photo, straightens it, evens out
+                the lighting and exports a crisp PDF. It works on cluttered
+                backgrounds and any paper size, and never keeps a copy of your
+                files.
               </p>
+              <a className="vx-more" href="#how" onClick={scrollToId("how")}>
+                See how it works
+                <ArrowDown size={16} strokeWidth={2} aria-hidden="true" />
+              </a>
             </section>
 
             <section className="vx-upload">
@@ -929,71 +1084,90 @@ export default function VertexScanner() {
                 onDrop={onDrop}
                 onClick={() => inputRef.current?.click()}
               >
-                <span className="vx-drop-badge">
-                  <UploadCloud size={22} strokeWidth={1.75} />
-                </span>
-                <p className="vx-drop-t">Drop documents to scan</p>
+                <DropArt />
+                <p className="vx-drop-t">
+                  {dragging ? "Drop to add" : "Drop photos to scan"}
+                </p>
                 <button
                   type="button"
-                  className="vx-cta-btn"
+                  className="vx-btn vx-btn-primary vx-btn-lg"
                   onClick={(e) => {
                     e.stopPropagation();
                     inputRef.current?.click();
                   }}
                 >
+                  <UploadCloud size={18} strokeWidth={2} />
                   Choose photos
                 </button>
-                <p className="vx-drop-d">
-                  or drag and drop JPG or PNG files here
-                </p>
+                <p className="vx-drop-d">JPG or PNG · one or many</p>
               </div>
+              {notice && (
+                <p className="vx-notice" role="alert">
+                  {notice}
+                </p>
+              )}
               {IS_HOSTED && (
-                <div className="vx-note">
+                <aside className="vx-note">
                   <a
                     className="vx-note-link"
                     href="https://github.com/AdemYahmadi/vertex#cli"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    For the best results, use the Vertex CLI
-                    <span aria-hidden="true"> →</span>
+                    For best results, use the Vertex CLI
+                    <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />
                   </a>
-                  <p className="vx-note-d">
-                    It scans at full resolution with the most accurate model.
-                    The browser version uses a lightweight model and scales
-                    images to {MAX_SIDE}px for faster scanning — photograph
-                    pages against a plain background for the most reliable
-                    detection.
-                  </p>
-                </div>
+                  <ul className="vx-note-list">
+                    <li>
+                      <span className="vx-note-k">CLI</span>
+                      Full resolution, most accurate model.
+                    </li>
+                    <li>
+                      <span className="vx-note-k">Browser</span>
+                      Lightweight model, images scaled to {HOSTED_MAX_SIDE}px.
+                    </li>
+                    <li>
+                      <span className="vx-note-k">Tip</span>
+                      Shoot pages on a plain background.
+                    </li>
+                  </ul>
+                </aside>
               )}
             </section>
           </div>
 
           <section className="vx-sec" id="how">
             <h2 className="vx-sec-h">How it works</h2>
-            <ol className="vx-grid-3 vx-steps-list">
-              {HOW.map((s, i) => (
-                <li className="vx-stepc" key={s.t}>
-                  <span className="vx-stepc-n">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <h3 className="vx-cell-h">{s.t}</h3>
-                  <p className="vx-cell-d">{s.d}</p>
-                </li>
-              ))}
+            <ol className="vx-steps">
+              {HOW.map((s, i) => {
+                const Icon = s.icon;
+                return (
+                  <li className="vx-step" key={s.t}>
+                    <div className="vx-step-top">
+                      <span className="vx-ic-tile">
+                        <Icon size={20} strokeWidth={1.75} />
+                      </span>
+                      <span className="vx-step-n">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                    </div>
+                    <h3 className="vx-cell-h">{s.t}</h3>
+                    <p className="vx-cell-d">{s.d}</p>
+                  </li>
+                );
+              })}
             </ol>
           </section>
 
           <section className="vx-sec" id="features">
             <h2 className="vx-sec-h">Built for real-world documents</h2>
-            <div className="vx-grid-3">
+            <div className="vx-specs">
               {FEATURES.map((f) => {
                 const Icon = f.icon;
                 return (
-                  <div className="vx-cell vx-card" key={f.t}>
-                    <span className="vx-cell-ic">
-                      <Icon size={18} strokeWidth={1.75} />
+                  <div className="vx-spec" key={f.t}>
+                    <span className="vx-ic-tile">
+                      <Icon size={20} strokeWidth={1.75} />
                     </span>
                     <h3 className="vx-cell-h">{f.t}</h3>
                     <p className="vx-cell-d">{f.d}</p>
@@ -1006,24 +1180,56 @@ export default function VertexScanner() {
       )}
 
       {view === "workspace" && selected && (
-        <main className="vx-main vx-main-ws">
-          <div className="vx-ws-bar">
-            <h1 className="vx-ws-title">
-              Pages
-              {items.length > 1 && (
-                <span className="vx-ws-hint">Press and hold to reorder</span>
-              )}
-            </h1>
-            <ol className="vx-flow" aria-label="Progress">
-              {["Upload", "Scan", "Download"].map((label, i) => (
+        <main className="vx-main vx-main-ws vx-wrap">
+          <ol className="vx-stepper" aria-label="Progress">
+            {["Upload", "Scan", "Download"].map((label, i) => {
+              const state =
+                i < stepIndex ? "done" : i === stepIndex ? "on" : "";
+              const fill =
+                i < stepIndex
+                  ? 1
+                  : i === stepIndex
+                    ? phase === "processing"
+                      ? progress
+                      : 1
+                    : 0;
+              return (
                 <li
                   key={label}
-                  className={`vx-flow-step ${i < stepIndex ? "done" : i === stepIndex ? "on" : ""}`}
+                  className={`vx-stepper-step ${state}`}
+                  aria-current={i === stepIndex ? "step" : undefined}
                 >
-                  {label}
+                  <span className="vx-stepper-bar" aria-hidden="true">
+                    <span style={{ transform: `scaleX(${fill})` }} />
+                  </span>
+                  <span className="vx-stepper-l">
+                    <span className="vx-stepper-n" aria-hidden="true">
+                      {i < stepIndex ? (
+                        <Check size={13} strokeWidth={2.5} />
+                      ) : (
+                        i + 1
+                      )}
+                    </span>
+                    {label}
+                  </span>
                 </li>
-              ))}
-            </ol>
+              );
+            })}
+          </ol>
+
+          <div className="vx-ws-bar">
+            <h1 className="vx-ws-title">Pages</h1>
+            <span className="vx-count">
+              {items.length} {items.length === 1 ? "page" : "pages"}
+              {items.length > 1 && (
+                <span className="vx-ws-hint">
+                  <span className="vx-hint-fine">Drag to reorder</span>
+                  <span className="vx-hint-coarse">
+                    Press and hold to reorder
+                  </span>
+                </span>
+              )}
+            </span>
           </div>
 
           {items.length > 1 && (
@@ -1033,6 +1239,13 @@ export default function VertexScanner() {
               role="group"
               aria-label="Pages"
             >
+              {drag && (
+                <span
+                  className="vx-drop-mark"
+                  aria-hidden="true"
+                  style={{ transform: `translateX(${drag.to * drag.slot}px)` }}
+                />
+              )}
               {items.map((it, i) => {
                 const on = it.id === selected.id;
                 const lifted = drag?.id === it.id;
@@ -1068,9 +1281,17 @@ export default function VertexScanner() {
                       }}
                       className="vx-thumb-btn"
                       aria-current={on ? "true" : undefined}
-                      aria-label={`Page ${i + 1}`}
+                      aria-label={`Page ${i + 1}${
+                        it.state === "done"
+                          ? ", scanned"
+                          : it.state === "error"
+                            ? ", failed"
+                            : it.state === "processing"
+                              ? ", scanning"
+                              : ""
+                      }`}
                       aria-describedby="vx-reorder-help"
-                      title={`Page ${i + 1} · ${it.name}`}
+                      title={`Page ${i + 1} · ← → to switch`}
                       onClick={() => setSelectedId(it.id)}
                       onKeyDown={(e) => {
                         if (!e.altKey) return;
@@ -1089,7 +1310,7 @@ export default function VertexScanner() {
                           it.resultUrl && angleOf(it)
                             ? {
                                 transform: `rotate(${angleOf(it)}deg)${
-                                  it.rotation % 180 ? " scale(1.29)" : ""
+                                  it.rotation % 180 ? " scale(1.334)" : ""
                                 }`,
                               }
                             : undefined
@@ -1098,23 +1319,26 @@ export default function VertexScanner() {
                       {it.state === "processing" && (
                         <span className="vx-thumb-busy">
                           <Loader2
-                            size={14}
+                            size={16}
                             className="vx-spin"
                             strokeWidth={2}
                           />
                         </span>
                       )}
-                      <span
-                        className={`vx-thumb-n ${
-                          it.state === "done"
-                            ? "ok"
-                            : it.state === "error"
-                              ? "err"
-                              : ""
-                        }`}
-                      >
-                        {i + 1}
+                      <span className="vx-thumb-grip" aria-hidden="true">
+                        <GripVertical size={14} strokeWidth={2} />
                       </span>
+                      {it.state === "done" && (
+                        <span className="vx-thumb-st ok" aria-hidden="true">
+                          <Check size={11} strokeWidth={3} />
+                        </span>
+                      )}
+                      {it.state === "error" && (
+                        <span className="vx-thumb-st err" aria-hidden="true">
+                          <TriangleAlert size={11} strokeWidth={2.5} />
+                        </span>
+                      )}
+                      <span className="vx-thumb-n">{i + 1}</span>
                     </button>
                   </div>
                 );
@@ -1142,36 +1366,67 @@ export default function VertexScanner() {
                   {(selected.name.split(".").pop() || "").toUpperCase()}
                 </span>
               </div>
-              {!processing && (
-                <button
-                  className="vx-remove"
-                  title="Remove page"
-                  onClick={() => removeItem(selected.id)}
+              {(canRotate || !processing) && (
+                <div
+                  className="vx-doc-tools"
+                  role="toolbar"
+                  aria-label="Page tools"
                 >
-                  <X size={13} strokeWidth={2} />
-                </button>
+                  {canRotate && (
+                    <button
+                      className="vx-btn vx-btn-quiet vx-tip"
+                      aria-label="Rotate page 90° clockwise"
+                      aria-keyshortcuts="R"
+                      data-tip="Rotate 90° clockwise · R"
+                      onClick={() => rotatePage(selected.id)}
+                    >
+                      <RotateCwSquare size={16} strokeWidth={1.75} />
+                      Rotate
+                      <kbd className="vx-kbd" aria-hidden="true">
+                        R
+                      </kbd>
+                    </button>
+                  )}
+                  {!processing && (
+                    <button
+                      className="vx-btn vx-btn-quiet vx-btn-danger vx-tip"
+                      aria-label="Remove page"
+                      aria-keyshortcuts="Delete Backspace"
+                      data-tip="Remove page · Del"
+                      onClick={() => removeItem(selected.id)}
+                    >
+                      <Trash2 size={16} strokeWidth={1.75} />
+                      Remove
+                    </button>
+                  )}
+                </div>
               )}
             </header>
 
             <div className="vx-compare">
               <figure className="vx-pane">
                 <figcaption className="vx-pane-label">
-                  <span>Original</span>
+                  <span className="vx-pane-state">Original</span>
                 </figcaption>
                 <div className="vx-pane-surface">
-                  <img
-                    src={selected.originalUrl}
-                    alt="Original"
-                    className="vx-doc"
-                  />
+                  <span className="vx-photo" style={originalBox}>
+                    <img
+                      src={selected.originalUrl}
+                      alt="Original"
+                      className="vx-doc vx-doc-photo"
+                    />
+                    {selected.state === "processing" && (
+                      <span className="vx-scan" aria-hidden="true">
+                        <span className="vx-scanline" />
+                      </span>
+                    )}
+                  </span>
                 </div>
               </figure>
 
               <figure className="vx-pane">
                 <figcaption className="vx-pane-label">
-                  <span
-                    className={selected.state === "done" ? "vx-scanned" : ""}
-                  >
+                  <span className={`vx-pane-state is-${selected.state}`}>
                     {selected.state === "done"
                       ? "Result"
                       : selected.state === "processing"
@@ -1181,25 +1436,9 @@ export default function VertexScanner() {
                           : "Preview"}
                   </span>
                   {canRotate && selected.rotation !== 0 && (
-                    <span className="vx-pane-rot">{selected.rotation}°</span>
-                  )}
-                  {canRotate && (
-                    <div
-                      className="vx-pane-tools"
-                      role="toolbar"
-                      aria-label="Page tools"
-                    >
-                      <button
-                        className="vx-tool"
-                        aria-label="Rotate page 90° clockwise"
-                        aria-keyshortcuts="R"
-                        title="Rotate 90° clockwise (R)"
-                        onClick={() => rotatePage(selected.id)}
-                      >
-                        <RotateCwSquare size={14} strokeWidth={1.75} />
-                        Rotate
-                      </button>
-                    </div>
+                    <span className="vx-pane-rot">
+                      Rotated {selected.rotation}°
+                    </span>
                   )}
                 </figcaption>
                 <div className="vx-pane-surface" ref={surfaceRef}>
@@ -1208,14 +1447,15 @@ export default function VertexScanner() {
                       key={selected.id}
                       src={selected.resultUrl}
                       alt="Scanned"
-                      className="vx-doc vx-doc-rot"
-                      style={
-                        angleOf(selected)
+                      className="vx-doc vx-doc-sheet vx-doc-rot"
+                      style={{
+                        ...resultBox,
+                        ...(angleOf(selected)
                           ? {
                               transform: `rotate(${angleOf(selected)}deg) scale(${resultScale})`,
                             }
-                          : undefined
-                      }
+                          : null),
+                      }}
                       onLoad={(e) =>
                         setResultSize({
                           url: selected.resultUrl,
@@ -1227,33 +1467,42 @@ export default function VertexScanner() {
                   )}
                   {selected.state === "processing" && (
                     <div className="vx-state">
-                      <Loader2 size={18} className="vx-spin" strokeWidth={2} />
+                      <div
+                        className="vx-sheet vx-sheet-skel"
+                        aria-hidden="true"
+                      >
+                        <span className="vx-skel-lines">
+                          {Array.from({ length: 9 }, (_, k) => (
+                            <span key={k} />
+                          ))}
+                        </span>
+                      </div>
                       <p className="vx-state-d">
-                        Correcting perspective and lighting…
+                        Straightening and cleaning up…
                       </p>
                     </div>
                   )}
                   {selected.state === "pending" && (
-                    <div className="vx-state">
+                    <div className="vx-state vx-state-msg">
                       <ScanLine
-                        size={18}
+                        size={24}
                         strokeWidth={1.75}
                         className="vx-state-ic"
                       />
-                      <p className="vx-state-t">Preview</p>
+                      <p className="vx-state-t">Not scanned yet</p>
                       <p className="vx-state-d">
-                        Your cleaned page will appear here after scanning.
+                        The cleaned page appears here after you scan.
                       </p>
                     </div>
                   )}
                   {selected.state === "error" && (
-                    <div className="vx-state">
+                    <div className="vx-state vx-state-msg" role="alert">
                       <AlertCircle
-                        size={18}
+                        size={24}
                         strokeWidth={2}
                         className="vx-state-ic err"
                       />
-                      <p className="vx-state-t">Could not scan</p>
+                      <p className="vx-state-t">Couldn't scan this page</p>
                       <p className="vx-state-d">{selected.error}</p>
                     </div>
                   )}
@@ -1262,14 +1511,24 @@ export default function VertexScanner() {
             </div>
           </section>
 
-          <div className="vx-ws-actions">
+          {notice && (
+            <p className="vx-notice" role="alert">
+              {notice}
+            </p>
+          )}
+
+          <div
+            className={`vx-ws-actions ${phase === "processing" ? "is-busy" : ""}`}
+          >
             <div className="vx-ws-meta">
               <span className="vx-ws-status" aria-live="polite">
                 {phase === "processing" ? (
                   <>
-                    <Loader2 size={14} className="vx-spin" strokeWidth={2} />
-                    Scanning {Math.min(doneCount + 1, items.length)} of{" "}
-                    {items.length}…
+                    <Loader2 size={16} className="vx-spin" strokeWidth={2} />
+                    Scanning page {Math.min(
+                      doneCount + 1,
+                      items.length,
+                    )} of {items.length}…
                   </>
                 ) : phase === "done" ? (
                   doneCount > 0 ? (
@@ -1278,13 +1537,18 @@ export default function VertexScanner() {
                     "Nothing scanned yet"
                   )
                 ) : (
-                  `${pendingCount} ${pendingCount === 1 ? "page" : "pages"} selected`
+                  `${pendingCount} ${pendingCount === 1 ? "page" : "pages"} ready to scan`
                 )}
               </span>
+              {phase === "processing" && (
+                <span className="vx-progress" aria-hidden="true">
+                  <span style={{ transform: `scaleX(${progress})` }} />
+                </span>
+              )}
               {phase === "done" && doneCount > 0 && errorCount > 0 && (
                 <span className="vx-ws-note">
-                  {errorCount} {errorCount === 1 ? "page" : "pages"} couldn't be
-                  scanned and won't be included.
+                  {errorCount} {errorCount === 1 ? "page" : "pages"} failed and
+                  will be left out.
                 </span>
               )}
             </div>
@@ -1295,6 +1559,7 @@ export default function VertexScanner() {
                   className="vx-btn vx-btn-secondary"
                   onClick={() => inputRef.current?.click()}
                 >
+                  <Plus size={16} strokeWidth={2} />
                   Add pages
                 </button>
                 {phase === "done" && doneCount > 0 && (
@@ -1302,6 +1567,7 @@ export default function VertexScanner() {
                     className="vx-btn vx-btn-secondary"
                     onClick={rescanAll}
                   >
+                    <RefreshCw size={16} strokeWidth={1.75} />
                     Scan again
                   </button>
                 )}
@@ -1312,11 +1578,13 @@ export default function VertexScanner() {
               <div className="vx-ws-export">
                 {phase === "ready" && (
                   <button className="vx-btn vx-btn-primary" onClick={scanAll}>
+                    <ScanLine size={16} strokeWidth={2} />
                     Scan {pendingCount > 1 ? `${pendingCount} pages` : "page"}
                   </button>
                 )}
                 {phase === "done" && doneCount === 0 && (
                   <button className="vx-btn vx-btn-primary" onClick={rescanAll}>
+                    <RefreshCw size={16} strokeWidth={2} />
                     Try again
                   </button>
                 )}
@@ -1349,20 +1617,20 @@ export default function VertexScanner() {
                 )}
                 {phase === "done" && doneCount > 0 && (
                   <button
-                    className="vx-btn vx-btn-primary vx-btn-download"
+                    className="vx-btn vx-btn-primary"
                     onClick={exportSeparate ? downloadSeparate : downloadAll}
                     disabled={downloading}
                   >
                     {downloading ? (
-                      <Loader2 size={14} className="vx-spin" strokeWidth={2} />
+                      <Loader2 size={16} className="vx-spin" strokeWidth={2} />
                     ) : (
-                      <Download size={14} strokeWidth={2} />
+                      <Download size={16} strokeWidth={2} />
                     )}
                     <span>
                       {downloading
                         ? "Preparing…"
                         : exportSeparate
-                          ? `Download ${doneCount} PDFs (.zip)`
+                          ? "Download ZIP"
                           : "Download PDF"}
                     </span>
                   </button>
@@ -1376,9 +1644,9 @@ export default function VertexScanner() {
       <footer
         className={`vx-footer ${view === "workspace" ? "vx-footer-quiet" : ""}`}
       >
-        <div className="vx-footer-in">
+        <div className="vx-wrap vx-footer-in">
           <p className="vx-copy">
-            © {year} Vertex — made for cleaner documents.
+            © {year} Vertex · Made for cleaner documents
           </p>
           <nav className="vx-footer-links">
             <a
@@ -1423,225 +1691,3 @@ export default function VertexScanner() {
     </div>
   );
 }
-
-const CSS = `
-.vx{
-  --bg:#F6F6F7; --surface:#FFFFFF; --panel:#F1F1F2;
-  --text:#18181B; --text-2:#3F3F46; --muted:#71717A; --faint:#A1A1AA;
-  --border:#E4E4E7; --border-2:#D4D4D8;
-  --accent:#0B6E52; --accent-ink:#075A42; --accent-soft:#EDF4F1;
-  --danger:#B91C1C; --danger-soft:#FBEEEE;
-  --radius:5px; --radius-lg:12px;
-  --ring:0 0 0 3px rgba(11,110,82,.18);
-  color:var(--text); background:var(--bg); min-height:100%;
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,Roboto,sans-serif;
-  font-size:13.5px; line-height:1.5; -webkit-font-smoothing:antialiased;
-  letter-spacing:-.003em;
-  display:flex; flex-direction:column;
-}
-.vx *{box-sizing:border-box;}
-.vx ::selection{background:rgba(11,110,82,.16);}
-
-.vx-nav{position:sticky; top:0; z-index:30; background:var(--bg); border-bottom:1px solid var(--border);}
-.vx-nav-in{max-width:1040px; margin:0 auto; height:48px; padding:0 clamp(16px,4vw,32px); display:flex; align-items:center; justify-content:space-between;}
-.vx-brand{display:inline-flex; align-items:center; gap:1px; background:none; border:0; padding:0; cursor:pointer; font-weight:600; font-size:14.5px; letter-spacing:-.01em; color:var(--text); font-family:inherit;}
-.vx-mark{display:block; flex:none;}
-.vx-nav-r{display:flex; align-items:center; gap:2px;}
-.vx-link{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:500; color:var(--muted); text-decoration:none; padding:5px 8px; border-radius:var(--radius); background:none; border:0; cursor:pointer; font-family:inherit; transition:color .1s, background .1s;}
-.vx-link:hover{color:var(--text); background:rgba(24,24,27,.05);}
-.vx-link:focus-visible, .vx-brand:focus-visible{outline:none; box-shadow:var(--ring); border-radius:var(--radius);}
-.vx-link-icon{color:var(--text-2);}
-@media (max-width:560px){ .vx-nav-r .vx-link:not(.vx-link-icon){display:none;} }
-
-.vx-main{flex:1; width:100%; max-width:1040px; margin:0 auto; padding:clamp(36px,6vw,68px) clamp(16px,4vw,32px) clamp(48px,6vw,72px);}
-.vx-main-ws{max-width:1040px; padding-top:clamp(16px,2.4vw,22px); padding-bottom:32px;}
-
-.vx-top{display:grid; grid-template-columns:minmax(0,1fr); gap:clamp(28px,4vw,40px); margin-bottom:clamp(30px,4.5vw,48px);}
-@media (min-width:900px){
-  .vx-top{grid-template-columns:minmax(0,1fr) 420px; gap:clamp(40px,5vw,72px); align-items:center;}
-}
-@media (min-width:1200px){ .vx-top{grid-template-columns:minmax(0,1fr) 440px;} }
-
-.vx-hero{max-width:560px; min-width:0;}
-.vx-kicker{font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); margin:0 0 14px;}
-.vx-h1{font-size:clamp(28px,3.6vw,38px); font-weight:600; line-height:1.15; letter-spacing:-.022em; margin:0 0 16px; color:var(--text); text-wrap:balance;}
-.vx-lead{font-size:clamp(15px,1.5vw,16.5px); line-height:1.55; color:var(--text-2); margin:0; max-width:52ch;}
-
-.vx-upload{min-width:0;}
-.vx-drop{display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
-  min-height:230px; padding:36px 28px; background:var(--surface);
-  border:1px dashed var(--border-2); border-radius:var(--radius-lg); cursor:pointer;
-  transition:border-color .12s, background .12s;}
-.vx-drop:hover{border-color:var(--accent); background:var(--accent-soft);}
-.vx-drop.is-drag{border-color:var(--accent); background:var(--accent-soft); border-style:solid;}
-.vx-drop:focus-visible{outline:none; border-color:var(--accent); box-shadow:var(--ring);}
-.vx-drop-badge{display:grid; place-items:center; width:30px; height:30px; margin-bottom:14px; color:var(--muted);}
-.vx-drop:hover .vx-drop-badge, .vx-drop.is-drag .vx-drop-badge{color:var(--accent);}
-.vx-drop-t{font-size:16px; font-weight:600; letter-spacing:-.01em; color:var(--text); margin:0 0 18px;}
-.vx-cta-btn{font-family:inherit; font-size:13.5px; font-weight:600; letter-spacing:-.005em; color:#fff;
-  background:var(--accent); border:0; border-radius:6px; padding:10px 18px; cursor:pointer;
-  transition:background .12s ease;}
-.vx-cta-btn:hover{background:var(--accent-ink);}
-.vx-cta-btn:focus-visible{outline:none; box-shadow:var(--ring);}
-.vx-drop-d{font-size:13px; color:var(--muted); margin:14px 0 0;}
-.vx-note{margin:14px 2px 0;}
-.vx-note-link{display:inline-block; font-size:12.5px; font-weight:600; letter-spacing:-.005em; color:var(--accent); text-decoration:none;}
-.vx-note-link:hover{text-decoration:underline; text-underline-offset:2px;}
-.vx-note-link:focus-visible{outline:none; box-shadow:var(--ring); border-radius:3px;}
-.vx-note-d{margin:4px 0 0; font-size:12px; line-height:1.55; color:var(--muted);}
-
-.vx-sec{padding-top:clamp(28px,4vw,44px); border-top:1px solid var(--border);}
-.vx-sec + .vx-sec{margin-top:clamp(30px,4.5vw,48px);}
-.vx-sec-h{font-size:clamp(17px,2vw,20px); font-weight:600; line-height:1.3; letter-spacing:-.018em; color:var(--text); margin:0 0 clamp(22px,2.6vw,30px);}
-.vx-grid-3{display:grid; grid-template-columns:1fr; gap:clamp(20px,3vw,28px);}
-@media (min-width:720px){ .vx-grid-3{grid-template-columns:repeat(3,1fr); gap:32px;} }
-.vx-cell{min-width:0;}
-.vx-steps-list{list-style:none; margin:0; padding:0;}
-.vx-stepc{min-width:0; padding-top:14px; border-top:1px solid var(--border-2);}
-.vx-stepc-n{display:block; margin-bottom:12px; font-size:11.5px; font-weight:600;
-  letter-spacing:.08em; color:var(--accent); font-variant-numeric:tabular-nums;}
-.vx-card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:22px 20px;}
-.vx-cell-ic{display:grid; place-items:center; width:20px; height:20px; color:var(--accent); margin-bottom:12px;}
-.vx-cell-h{font-size:15px; font-weight:600; color:var(--text); margin:0 0 8px; letter-spacing:-.012em;}
-.vx-cell-d{font-size:14px; line-height:1.6; color:var(--muted); margin:0;}
-
-.vx-ws-bar{display:flex; align-items:center; justify-content:space-between; gap:16px;
-  padding-bottom:12px; margin-bottom:clamp(16px,2.4vw,24px); border-bottom:1px solid var(--border);}
-.vx-ws-title{display:inline-flex; align-items:baseline; gap:7px; margin:0; padding:2px 0; color:var(--text-2); font-size:12.5px; font-weight:600; line-height:1.5; letter-spacing:-.005em;}
-
-.vx-flow{display:flex; align-items:center; gap:7px; list-style:none; margin:0; padding:0; flex:none;}
-.vx-flow-step{display:inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; color:var(--faint); transition:color .12s ease;}
-.vx-flow-step + .vx-flow-step::before{content:"→"; margin-right:7px; color:var(--border-2);}
-.vx-flow-step.done{color:var(--muted);}
-.vx-flow-step.on{color:var(--accent); font-weight:600;}
-@media (max-width:620px){ .vx-flow{display:none;} }
-
-.vx-ws{min-width:0;}
-.vx-doc-head{display:flex; align-items:center; gap:8px; margin-bottom:12px;}
-.vx-doc-meta{flex:0 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px;}
-.vx-doc-name{font-size:14px; font-weight:600; line-height:1.35; color:var(--text); letter-spacing:-.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.vx-doc-sub{font-size:12px; line-height:1.35; color:var(--muted); font-variant-numeric:tabular-nums;}
-.vx-sr{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
-.vx-ws-hint{display:none; font-size:11.5px; font-weight:400; color:var(--faint);}
-@media (pointer:coarse){ .vx-ws-hint{display:inline;} }
-
-.vx-strip{display:flex; align-items:flex-start; gap:10px; overflow-x:auto; padding:6px 3px 10px; margin:-3px -3px clamp(8px,1.4vw,12px); scrollbar-width:thin;}
-.vx-thumb{position:relative; flex:none; width:56px; height:72px; touch-action:manipulation;
-  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;}
-.vx-strip.is-dragging .vx-thumb{transition:transform .16s ease;}
-.vx-strip.is-dragging .vx-thumb.is-lifted{z-index:2; transition:none;}
-.vx-strip.is-dropping .vx-thumb.is-lifted{z-index:2; transition:transform .12s ease;}
-.vx-strip.is-dragging, .vx-strip.is-dragging .vx-thumb-btn{cursor:grabbing;}
-.vx-thumb-btn{position:relative; display:block; width:100%; height:100%; padding:0; overflow:hidden; font-family:inherit;
-  background:var(--surface); border:1px solid var(--border-2); border-radius:4px; cursor:grab;
-  transition:border-color .12s ease, box-shadow .12s ease; -webkit-tap-highlight-color:transparent;}
-.vx-thumb-btn:hover{border-color:var(--faint); box-shadow:0 1px 2px rgba(16,16,20,.05);}
-.vx-thumb-btn:focus-visible{outline:none; box-shadow:var(--ring);}
-.vx-thumb.on .vx-thumb-btn{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
-.vx-thumb.on .vx-thumb-btn:focus-visible{box-shadow:0 0 0 1px var(--accent), var(--ring);}
-.vx-thumb.is-lifted .vx-thumb-btn{box-shadow:0 4px 12px rgba(16,16,20,.14);}
-.vx-thumb.on.is-lifted .vx-thumb-btn{box-shadow:0 0 0 1px var(--accent), 0 4px 12px rgba(16,16,20,.14);}
-.vx-thumb-btn img{display:block; width:100%; height:100%; object-fit:cover; pointer-events:none; transition:transform .15s ease;}
-.vx-thumb-busy{position:absolute; inset:0; display:grid; place-items:center; background:color-mix(in srgb, var(--surface) 65%, transparent);}
-.vx-thumb-n{position:absolute; left:3px; bottom:3px; min-width:16px; height:16px; padding:0 4px; display:grid; place-items:center;
-  font-size:10.5px; font-weight:600; line-height:1; font-variant-numeric:tabular-nums; color:var(--text-2);
-  background:var(--surface); border:1px solid var(--border); border-radius:3px;}
-.vx-thumb-n.ok{color:var(--accent);}
-.vx-thumb-n.err{color:var(--danger);}
-.vx-doc-head .vx-remove{margin-left:0;}
-.vx-remove{display:grid; place-items:center; width:24px; height:24px; cursor:pointer; background:none; border:0; border-radius:4px; color:var(--faint); opacity:.6; transition:opacity .12s ease, color .12s ease, background .12s ease; flex:none;}
-.vx-remove:hover{opacity:1; color:var(--danger); background:var(--danger-soft);}
-.vx-remove:focus-visible{outline:none; opacity:1; box-shadow:var(--ring);}
-
-.vx-compare{display:grid; grid-template-columns:minmax(0,1fr); gap:clamp(16px,2.4vw,24px);}
-@media (min-width:860px){ .vx-compare{grid-template-columns:repeat(2,minmax(0,1fr));} }
-.vx-pane{margin:0; min-width:0;}
-.vx-pane-label{display:flex; align-items:center; gap:5px; min-height:22px; margin-bottom:8px; font-size:10.5px; font-weight:600; color:var(--faint); letter-spacing:.06em; text-transform:uppercase;}
-.vx-scanned{color:var(--accent); font-weight:600;}
-.vx-pane-rot{font-size:10.5px; font-weight:500; color:var(--faint); letter-spacing:0; font-variant-numeric:tabular-nums;}
-.vx-pane-tools{margin-left:auto; display:flex; align-items:center; gap:2px;}
-.vx-tool{display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 7px 0 6px; font-family:inherit; font-size:11.5px; font-weight:500;
-  letter-spacing:0; text-transform:none; color:var(--muted); background:none; border:0; border-radius:4px; cursor:pointer;
-  transition:color .12s ease, background .12s ease;}
-.vx-tool svg{color:var(--faint); transition:color .12s ease;}
-@media (hover:hover){
-  .vx-tool:hover{color:var(--text); background:rgba(24,24,27,.05);}
-  .vx-tool:hover svg{color:var(--text-2);}
-}
-.vx-tool:active{color:var(--text); background:rgba(24,24,27,.05);}
-.vx-tool:focus-visible{outline:none; box-shadow:var(--ring);}
-@media (pointer:coarse){ .vx-tool{height:30px; padding:0 10px 0 8px; font-size:12.5px;} }
-.vx-doc-rot{transition:transform .15s ease;}
-.vx-pane-surface{position:relative; display:flex; align-items:center; justify-content:center;
-  height:clamp(340px,54vh,600px); padding:12px; background:var(--surface);
-  border:1px solid var(--border); border-radius:var(--radius-lg);}
-.vx-doc{max-width:100%; max-height:100%; object-fit:contain; box-shadow:0 0 0 1px rgba(16,16,20,.07),0 1px 2px rgba(16,16,20,.05);}
-
-.vx-state{display:flex; flex-direction:column; align-items:center; text-align:center; max-width:290px; padding:0 8px;}
-.vx-state-ic{color:var(--faint);}
-.vx-state-ic.err{color:var(--danger);}
-.vx-state-t{margin:11px 0 0; font-size:13px; font-weight:600; color:var(--text-2);}
-.vx-state .vx-spin + .vx-state-d{margin-top:12px;}
-.vx-state-d{margin:5px 0 0; font-size:12.5px; line-height:1.55; color:var(--muted);}
-.vx-state .vx-btn{margin-top:16px;}
-
-.vx-ws-actions{position:sticky; bottom:0; z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:14px;
-  margin-top:clamp(16px,2.4vw,24px); padding:12px 0; background:var(--bg); border-top:1px solid var(--border);}
-.vx-ws-meta{display:flex; flex-direction:column; gap:2px; min-width:0;}
-.vx-ws-status{display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--text-2); font-variant-numeric:tabular-nums;}
-.vx-ws-note{font-size:12px; line-height:1.4; color:var(--muted);}
-.vx-ws-tools{display:flex; align-items:center; gap:8px;}
-.vx-ws-export{display:flex; align-items:center; gap:8px; margin-left:auto;}
-
-.vx-seg{display:inline-flex; align-items:stretch; height:32px; padding:2px; gap:2px; background:var(--panel); border:1px solid var(--border); border-radius:6px;}
-.vx-seg-opt{position:relative; display:inline-flex; align-items:center; justify-content:center; padding:0 10px; border-radius:4px;
-  font-size:12.5px; font-weight:500; letter-spacing:-.003em; line-height:1; color:var(--muted); white-space:nowrap; cursor:pointer; user-select:none;
-  transition:color .12s ease, background .12s ease;}
-.vx-seg-opt input{position:absolute; width:1px; height:1px; margin:0; opacity:0; pointer-events:none;}
-.vx-seg-opt:hover{color:var(--text);}
-.vx-seg-opt.on{color:var(--text); background:var(--surface); box-shadow:0 0 0 1px var(--border-2);}
-.vx-seg-opt:has(input:focus-visible){box-shadow:var(--ring);}
-.vx-seg-opt.on:has(input:focus-visible){box-shadow:0 0 0 1px var(--border-2), var(--ring);}
-.vx-seg-opt:has(input:disabled){opacity:.5; cursor:default;}
-
-.vx-btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 13px; font-family:inherit; font-size:12.5px; font-weight:500; letter-spacing:-.003em; border-radius:6px; border:1px solid transparent; cursor:pointer; transition:background .12s ease, border-color .12s ease, color .12s ease;}
-.vx-btn:focus-visible{outline:none; box-shadow:var(--ring);}
-.vx-btn-primary{background:var(--accent); color:#fff; font-weight:600;}
-.vx-btn-primary:hover:not(:disabled){background:var(--accent-ink);}
-.vx-btn-primary:disabled{opacity:.5; cursor:default;}
-.vx-btn-secondary{background:none; color:var(--muted); border-color:var(--border-2);}
-.vx-btn-secondary:hover{border-color:var(--faint); color:var(--text);}
-.vx-btn-secondary:disabled{opacity:.5; cursor:default;}
-.vx-btn-download{gap:7px;}
-.vx-spin{animation:vx-rot .8s linear infinite; color:var(--accent);}
-@keyframes vx-rot{to{transform:rotate(360deg);}}
-
-@media (max-width:859px){
-  .vx-pane-surface{height:clamp(320px,46vh,460px);}
-}
-@media (max-width:620px){
-  .vx-ws-actions{flex-direction:column; align-items:stretch; gap:10px;}
-  .vx-ws-export{order:1; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr); gap:8px;}
-  .vx-ws-tools{order:2; display:grid; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); gap:8px;}
-  .vx-seg{height:40px;}
-  .vx-seg-opt{flex:1 1 0; font-size:13px;}
-  .vx-btn{height:40px; padding:0 15px; font-size:13px;}
-  .vx-pane-surface{height:clamp(300px,44vh,400px);}
-}
-
-.vx-footer{border-top:1px solid var(--border);}
-.vx-footer-in{max-width:1040px; margin:0 auto; padding:16px clamp(16px,4vw,32px); display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;}
-.vx-copy{font-size:12px; color:var(--faint); margin:0;}
-.vx-footer-links{display:flex; align-items:center; gap:4px;}
-.vx-footer-quiet{border-top-color:var(--border);}
-.vx-footer-quiet .vx-footer-in{padding-top:12px; padding-bottom:12px;}
-.vx-footer-quiet .vx-copy{font-size:11px; color:var(--faint);}
-.vx-footer-quiet .vx-link{font-size:11px; color:var(--faint);}
-.vx-footer-quiet .vx-link:hover{color:var(--muted); background:none;}
-
-@media (max-width:560px){
-  .vx-actions .vx-btn{flex:1 1 auto;}
-  .vx-footer-in{justify-content:flex-start;}
-}
-@media (prefers-reduced-motion:reduce){ .vx-spin{animation-duration:1.6s;} .vx-skel{animation:none;} .vx-btn,.vx-link,.vx-drop{transition:none;} }
-`;
