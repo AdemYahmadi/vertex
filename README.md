@@ -38,7 +38,7 @@ It comes in two forms:
 **[vertex.ademyahmadi.com](https://vertex.ademyahmadi.com)**
 
 > [!IMPORTANT]
-> The demo runs on a **free server**, so to keep it responsive it uses a **lightweight detection model** and **scales large images down to 1800px**. For best results, photograph the page against a plain, uncluttered background. For **full-resolution scans and the most accurate model**, install the [CLI](#cli) — it runs the full pipeline locally with no size limits.
+> The demo scans **entirely in your browser** — photos never leave your device. To stay fast on phones it uses a **lightweight detection model** and **scales large images down to 1800px**. For best results, photograph the page against a plain, uncluttered background. For **full-resolution scans and the most accurate model**, install the [CLI](#cli) — it runs the full pipeline locally with no size limits.
 
 ## Features
 
@@ -117,18 +117,10 @@ Each document is written as its own PDF into the output folder.
 
 ## Web App
 
-Prefer to run the web interface yourself?
-
-**Backend** (from the repository root):
-
-```bash
-python -m venv venv
-source venv/bin/activate            # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn api:app --reload --port 8000
-```
-
-**Frontend** (in a second terminal):
+The web app runs the whole pipeline in the browser: the DocAligner model via
+[ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) and the
+perspective correction and enhancement via [OpenCV.js](https://docs.opencv.org/4.x/d5/d10/tutorial_js_root.html).
+It is a static site with no backend. To run it locally:
 
 ```bash
 cd frontend
@@ -137,6 +129,15 @@ npm run dev
 ```
 
 Then open the printed local URL.
+
+The production site is deployed to Cloudflare Workers as static assets
+(see `wrangler.toml`). `api.py` is a standalone FastAPI service exposing the
+same pipeline over HTTP, if you prefer to scan server-side:
+
+```bash
+pip install -r requirements.txt
+uvicorn api:app --reload --port 8000
+```
 
 ## Project Structure
 
@@ -152,10 +153,15 @@ vertex/
 │   └── utils/
 │       └── io.py               # Image loading
 └── frontend/
+    ├── public/models/          # DocAligner fastvit_t8 ONNX model
     └── src/
-        └── VertexScanner.jsx   # The complete web interface
+        ├── VertexScanner.jsx   # The complete web interface
+        └── scanner/            # In-browser port of the scanning pipeline
 ```
 
 ## License
 
-Released under the MIT License.
+Released under the MIT License. The bundled detection model
+(`frontend/public/models/docaligner-fastvit_t8.onnx`) comes from
+[DocAligner](https://github.com/DocsaidLab/DocAligner) and is licensed under
+the Apache License 2.0.

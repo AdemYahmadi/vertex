@@ -128,3 +128,6 @@ tempCodeRunnerFile.py
 node_modules/
 frontend/dist/
 *.local
+
+# --- Cloudflare / browser scanner ---
+.wrangler/

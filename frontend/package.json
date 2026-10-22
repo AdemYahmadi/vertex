@@ -10,7 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "lucide-react": "^0.469.0",
+    "onnxruntime-web": "^1.30.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -22,4 +24,3 @@
     "vite": "^8.2.0"
   }
 }
-

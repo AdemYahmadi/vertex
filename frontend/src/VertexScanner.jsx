@@ -19,6 +19,7 @@ import {
   RefreshCw,
   ArrowRight,
 } from "lucide-react";
+import { scanLocally, warmScanner } from "./scanner";
 
 const GitHubIcon = ({ size = 14 }) => (
   <svg
@@ -88,150 +89,25 @@ const DropArt = () => (
 );
 
 const USE_MOCK = false;
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/scan";
 const HOSTED_MAX_SIDE = 1800;
 const MAX_SIDE = import.meta.env.DEV ? 0 : HOSTED_MAX_SIDE;
 const IS_HOSTED = import.meta.env.VITE_HOSTED === "true";
 
-const HEALTH_URL = (() => {
-  try {
-    return new URL("/health", new URL(API_URL, window.location.href)).href;
-  } catch {
-    return "";
-  }
-})();
-const SCAN_TIMEOUT_MS = 120000;
-const WAKE_TIMEOUT_MS = 90000;
-const RETRY_DELAY_MS = 1500;
-
-let wakeInFlight = null;
-
-function wakeApi() {
-  if (!HEALTH_URL) return Promise.resolve();
-  if (!wakeInFlight) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), WAKE_TIMEOUT_MS);
-    wakeInFlight = fetch(HEALTH_URL, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .catch(() => {})
-      .then(() => {
-        clearTimeout(timer);
-        wakeInFlight = null;
-      });
-  }
-  return wakeInFlight;
-}
-
-const SCAN_MESSAGES = {
-  413: "That image is too large. Try a smaller photo.",
-  415: "Unsupported file type. Please upload a JPG or PNG.",
-  422: "We couldn't find a document in that photo. Make sure the whole page is visible against a contrasting background, with even lighting.",
-  429: "Too many scans at once. Please wait a moment and try again.",
-  502: "The scanner is waking up or busy. Please try again in a few seconds.",
-  503: "The scanner is starting up. Please try again in a few seconds.",
-};
-
-const COLD_START_STATUSES = new Set([429, 502, 503, 504]);
-
-async function downscale(file, maxSide) {
-  if (!maxSide) return file;
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = rej;
-      i.src = url;
-    });
-    const longest = Math.max(img.width, img.height);
-    if (longest <= maxSide) return file;
-    const scale = maxSide / longest;
-    const w = Math.round(img.width * scale);
-    const h = Math.round(img.height * scale);
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-    const blob = await new Promise((res) =>
-      canvas.toBlob(res, "image/jpeg", 0.92),
-    );
-    if (!blob) return file;
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, "")}.jpg`, {
-      type: "image/jpeg",
-    });
-  } catch {
-    return file;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-async function postScan(file) {
-  const form = new FormData();
-  form.append("file", await downscale(file, MAX_SIDE));
-  const sep = API_URL.includes("?") ? "&" : "?";
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS);
-  try {
-    return await fetch(`${API_URL}${sep}fmt=png`, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const NO_DOCUMENT_MESSAGE =
+  "We couldn't find a document in that photo. Make sure the whole page is visible against a contrasting background, with even lighting.";
 
 async function scanDocument(file) {
   if (USE_MOCK) return mockScan(file);
-
-  const attempts = 2;
-  let lastError;
-
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    const isLast = attempt === attempts - 1;
-    let res;
-    try {
-      res = await postScan(file);
-    } catch (err) {
-      lastError = new Error(
-        err?.name === "AbortError"
-          ? "The scanner took too long to respond. Please try again."
-          : "Couldn't reach the scanner. Check your connection and try again.",
-      );
-      if (isLast) throw lastError;
-      await wakeApi();
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-      continue;
-    }
-
-    if (res.ok) return res.blob();
-
-    let detail = "";
-    try {
-      detail = (await res.json())?.detail || "";
-    } catch {}
-    lastError = new Error(
-      detail ||
-        SCAN_MESSAGES[res.status] ||
-        "Something went wrong while scanning. Please try again.",
+  try {
+    return await scanLocally(file, MAX_SIDE);
+  } catch (err) {
+    if (!err?.noDocument) console.error("Scan failed:", err);
+    throw new Error(
+      err?.noDocument
+        ? NO_DOCUMENT_MESSAGE
+        : "Something went wrong while scanning. Please try again.",
     );
-
-    if (!isLast && COLD_START_STATUSES.has(res.status)) {
-      await wakeApi();
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-      continue;
-    }
-    throw lastError;
   }
-
-  throw lastError;
 }
 
 function mockScan(file) {
@@ -509,7 +385,7 @@ const FEATURES = [
   {
     icon: ShieldCheck,
     t: "Private by default",
-    d: "Photos are processed in memory and discarded once the scan returns. PDFs are built in your browser. Nothing is stored on a server.",
+    d: "Scanning runs entirely in your browser. Your photos never leave your device and nothing is uploaded to a server.",
   },
 ];
 
@@ -558,7 +434,7 @@ export default function VertexScanner() {
           : "",
       );
       if (!files.length) return;
-      if (!USE_MOCK) wakeApi();
+      if (!USE_MOCK) warmScanner();
       const created = files.map((file) => {
         const id = ++_id;
         const originalUrl = URL.createObjectURL(file);
@@ -865,10 +741,6 @@ export default function VertexScanner() {
     },
     [],
   );
-
-  useEffect(() => {
-    if (!USE_MOCK) wakeApi();
-  }, []);
 
   const selected = items.find((i) => i.id === selectedId) || items[0] || null;
   const angleOf = (it) => spins.current.get(it.id) ?? it.rotation;
