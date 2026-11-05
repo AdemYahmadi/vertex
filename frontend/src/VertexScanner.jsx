@@ -18,6 +18,7 @@ import {
   Plus,
   RefreshCw,
   ArrowRight,
+  Undo2,
 } from "lucide-react";
 
 const GitHubIcon = ({ size = 14 }) => (
@@ -93,13 +94,15 @@ const HOSTED_MAX_SIDE = 1800;
 const MAX_SIDE = import.meta.env.DEV ? 0 : HOSTED_MAX_SIDE;
 const IS_HOSTED = import.meta.env.VITE_HOSTED === "true";
 
-const HEALTH_URL = (() => {
+const apiPath = (path) => {
   try {
-    return new URL("/health", new URL(API_URL, window.location.href)).href;
+    return new URL(path, new URL(API_URL, window.location.href)).href;
   } catch {
     return "";
   }
-})();
+};
+const HEALTH_URL = apiPath("/health");
+const DETECT_URL = apiPath("/detect");
 const SCAN_TIMEOUT_MS = 120000;
 const WAKE_TIMEOUT_MS = 90000;
 const RETRY_DELAY_MS = 1500;
@@ -171,14 +174,21 @@ async function downscale(file, maxSide) {
   }
 }
 
-async function postScan(file) {
+const uploads = new WeakMap();
+
+function prepareUpload(file) {
+  if (!uploads.has(file)) uploads.set(file, downscale(file, MAX_SIDE));
+  return uploads.get(file);
+}
+
+async function postForm(url, file, fields = {}) {
   const form = new FormData();
-  form.append("file", await downscale(file, MAX_SIDE));
-  const sep = API_URL.includes("?") ? "&" : "?";
+  form.append("file", await prepareUpload(file));
+  for (const [k, v] of Object.entries(fields)) form.append(k, v);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS);
   try {
-    return await fetch(`${API_URL}${sep}fmt=png`, {
+    return await fetch(url, {
       method: "POST",
       body: form,
       signal: controller.signal,
@@ -188,9 +198,26 @@ async function postScan(file) {
   }
 }
 
-async function scanDocument(file) {
-  if (USE_MOCK) return mockScan(file);
+function postScan(file, corners) {
+  const sep = API_URL.includes("?") ? "&" : "?";
+  return postForm(
+    `${API_URL}${sep}fmt=png`,
+    file,
+    corners ? { corners: JSON.stringify(corners) } : {},
+  );
+}
 
+async function scanDocument(file, corners) {
+  if (USE_MOCK) return mockScan(file);
+  return (await callApi(() => postScan(file, corners))).blob();
+}
+
+async function detectCorners(file) {
+  if (USE_MOCK) return { corners: null };
+  return (await callApi(() => postForm(DETECT_URL, file))).json();
+}
+
+async function callApi(send) {
   const attempts = 2;
   let lastError;
 
@@ -198,7 +225,7 @@ async function scanDocument(file) {
     const isLast = attempt === attempts - 1;
     let res;
     try {
-      res = await postScan(file);
+      res = await send();
     } catch (err) {
       lastError = new Error(
         err?.name === "AbortError"
@@ -211,7 +238,7 @@ async function scanDocument(file) {
       continue;
     }
 
-    if (res.ok) return res.blob();
+    if (res.ok) return res;
 
     let detail = "";
     try {
@@ -281,6 +308,382 @@ function mockScan(file) {
     img.onerror = () => reject(new Error("Could not read that image"));
     img.src = URL.createObjectURL(file);
   });
+}
+
+const CORNER_NAMES = ["Top-left", "Top-right", "Bottom-right", "Bottom-left"];
+const EDGE_NAMES = ["Top", "Right", "Bottom", "Left"];
+const FALLBACK_CORNERS = [
+  [0.08, 0.08],
+  [0.92, 0.08],
+  [0.92, 0.92],
+  [0.08, 0.92],
+];
+const PREVIEW_SOURCE_SIDE = 1200;
+const PREVIEW_MAX_SIDE = 800;
+
+function toPixels(corners, w, h) {
+  return corners.map(([x, y]) => [x * w, y * h]);
+}
+
+function quadIsValid(corners, w = 1, h = 1) {
+  if (!corners || corners.length !== 4) return false;
+  const p = toPixels(corners, w, h);
+  let area = 0;
+  for (let i = 0; i < 4; i++) {
+    const [a, b, c] = [p[i], p[(i + 1) % 4], p[(i + 2) % 4]];
+    const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (!(cross > 0)) return false;
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.02 * Math.max(w, h))
+      return false;
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  return area / 2 >= 0.005 * w * h;
+}
+
+function confirmable(it) {
+  return (
+    it?.state === "review" && quadIsValid(it.corners, it.dims?.w, it.dims?.h)
+  );
+}
+
+function sameCorners(a, b) {
+  return (
+    !!a &&
+    !!b &&
+    a.every((p, i) => p[0] === b[i][0] && p[1] === b[i][1])
+  );
+}
+
+// Homography mapping each `from` point onto the matching `to` point.
+function homography(from, to) {
+  const A = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = from[i],
+      [u, v] = to[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+  for (let c = 0; c < 8; c++) {
+    let pivot = c;
+    for (let r = c + 1; r < 8; r++)
+      if (Math.abs(A[r][c]) > Math.abs(A[pivot][c])) pivot = r;
+    [A[c], A[pivot]] = [A[pivot], A[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 9; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  return [...A.map((row, i) => row[8] / row[i]), 1];
+}
+
+function warpSize(p) {
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const [tl, tr, br, bl] = p;
+  return {
+    w: Math.max(d(br, bl), d(tr, tl)),
+    h: Math.max(d(tr, br), d(tl, bl)),
+  };
+}
+
+function warpPreview(source, corners, maxSide) {
+  const p = toPixels(corners, source.width, source.height);
+  const size = warpSize(p);
+  const k = Math.min(1, maxSide / Math.max(size.w, size.h));
+  const W = Math.max(1, Math.round(size.w * k)),
+    H = Math.max(1, Math.round(size.h * k));
+  const m = homography(
+    [
+      [0, 0],
+      [W - 1, 0],
+      [W - 1, H - 1],
+      [0, H - 1],
+    ],
+    p,
+  );
+  if (!m) return null;
+  const out = new ImageData(W, H);
+  const o = out.data,
+    s = source.data,
+    sw = source.width,
+    sh = source.height;
+  for (let v = 0, i = 0; v < H; v++) {
+    for (let u = 0; u < W; u++, i += 4) {
+      const z = m[6] * u + m[7] * v + m[8];
+      let x = (m[0] * u + m[1] * v + m[2]) / z;
+      let y = (m[3] * u + m[4] * v + m[5]) / z;
+      x = x < 0 ? 0 : x > sw - 1 ? sw - 1 : x;
+      y = y < 0 ? 0 : y > sh - 1 ? sh - 1 : y;
+      const x0 = x | 0,
+        y0 = y | 0,
+        x1 = x0 + 1 < sw ? x0 + 1 : x0,
+        y1 = y0 + 1 < sh ? y0 + 1 : y0;
+      const fx = x - x0,
+        fy = y - y0;
+      const a = (y0 * sw + x0) * 4,
+        b = (y0 * sw + x1) * 4,
+        c = (y1 * sw + x0) * 4,
+        d = (y1 * sw + x1) * 4;
+      for (let ch = 0; ch < 3; ch++) {
+        const top = s[a + ch] + (s[b + ch] - s[a + ch]) * fx;
+        const bot = s[c + ch] + (s[d + ch] - s[c + ch]) * fx;
+        o[i + ch] = top + (bot - top) * fy;
+      }
+      o[i + 3] = 255;
+    }
+  }
+  return out;
+}
+
+async function loadPreviewSource(url) {
+  const img = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = rej;
+    i.src = url;
+  });
+  const k = Math.min(
+    1,
+    PREVIEW_SOURCE_SIDE / Math.max(img.naturalWidth, img.naturalHeight),
+  );
+  const w = Math.max(1, Math.round(img.naturalWidth * k)),
+    h = Math.max(1, Math.round(img.naturalHeight * k));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  return ctx.getImageData(0, 0, w, h);
+}
+
+const clamp01 = (n) => Math.min(1, Math.max(0, n));
+
+// Largest t in [lo, hi] (scaled by the move vector) that keeps every point in 0..1.
+function clampShift(points, [mx, my]) {
+  let lo = -Infinity,
+    hi = Infinity;
+  for (const [x, y] of points)
+    for (const [p, m] of [
+      [x, mx],
+      [y, my],
+    ]) {
+      if (Math.abs(m) < 1e-12) continue;
+      const a = -p / m,
+        b = (1 - p) / m;
+      lo = Math.max(lo, Math.min(a, b));
+      hi = Math.min(hi, Math.max(a, b));
+    }
+  return Math.min(1, Math.max(lo, Math.min(hi, 1)));
+}
+
+// Moves edge i (corner i to corner i + 1) along its normal by the drag vector.
+function shiftEdge(corners, i, [dx, dy], w, h) {
+  const j = (i + 1) % 4;
+  const ex = (corners[j][0] - corners[i][0]) * w,
+    ey = (corners[j][1] - corners[i][1]) * h;
+  const len = Math.hypot(ex, ey) || 1;
+  const nx = -ey / len,
+    ny = ex / len;
+  const along = dx * w * nx + dy * h * ny;
+  const move = [(along * nx) / w, (along * ny) / h];
+  const t = clampShift([corners[i], corners[j]], move);
+  return corners.map((c, k) =>
+    k === i || k === j ? [c[0] + move[0] * t, c[1] + move[1] * t] : c,
+  );
+}
+
+function CornerEditor({ corners, aspect, invalid, onChange }) {
+  const frameRef = useRef(null);
+  const grab = useRef(null);
+  const [active, setActive] = useState(null);
+
+  useEffect(() => {
+    const block = (e) => {
+      if (grab.current) e.preventDefault();
+    };
+    document.addEventListener("touchmove", block, { passive: false });
+    return () => document.removeEventListener("touchmove", block);
+  }, []);
+
+  const relative = (e) => {
+    const r = frameRef.current.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
+
+  const move = (kind, i, from, delta) => {
+    if (kind === "corner")
+      return from.map((c, k) =>
+        k === i ? [clamp01(c[0] + delta[0]), clamp01(c[1] + delta[1])] : c,
+      );
+    return shiftEdge(from, i, delta, aspect, 1);
+  };
+
+  const onPointerDown = (kind, i) => (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.focus();
+    grab.current = {
+      kind,
+      i,
+      pointerId: e.pointerId,
+      start: relative(e),
+      from: corners,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setActive(`${kind}${i}`);
+  };
+  const onPointerMove = (e) => {
+    const g = grab.current;
+    if (!g || e.pointerId !== g.pointerId) return;
+    const [x, y] = relative(e);
+    onChange(move(g.kind, g.i, g.from, [x - g.start[0], y - g.start[1]]));
+  };
+  const endDrag = (e) => {
+    const g = grab.current;
+    if (!g || e.pointerId !== g.pointerId) return;
+    grab.current = null;
+    setActive(null);
+  };
+  const onKeyDown = (kind, i) => (e) => {
+    const step = e.shiftKey ? 0.02 : 0.004;
+    const delta = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    }[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onChange(move(kind, i, corners, delta));
+  };
+
+  const handleProps = (kind, i) => ({
+    onPointerDown: onPointerDown(kind, i),
+    onPointerMove,
+    onPointerUp: endDrag,
+    onPointerCancel: endDrag,
+    onLostPointerCapture: endDrag,
+    onKeyDown: onKeyDown(kind, i),
+    onContextMenu: (e) => e.preventDefault(),
+  });
+
+  const pts = corners.map(([x, y]) => `${x * 100},${y * 100}`).join(" ");
+  return (
+    <span
+      ref={frameRef}
+      className={`vx-corners ${invalid ? "is-invalid" : ""} ${active ? "is-dragging" : ""}`}
+    >
+      <svg
+        className="vx-corners-svg"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path
+          className="vx-corners-veil"
+          fillRule="evenodd"
+          d={`M0 0H100V100H0Z M${corners
+            .map(([x, y]) => `${x * 100} ${y * 100}`)
+            .join(" L")}Z`}
+        />
+        <polygon
+          className="vx-corners-line"
+          points={pts}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      {corners.map((a, i) => {
+        const b = corners[(i + 1) % 4];
+        const angle =
+          (Math.atan2(b[1] - a[1], (b[0] - a[0]) * aspect) * 180) / Math.PI;
+        const across = Math.abs(Math.sin((angle * Math.PI) / 180)) > 0.7071;
+        return (
+          <button
+            key={`e${i}`}
+            type="button"
+            className={`vx-handle vx-handle-edge ${active === `edge${i}` ? "on" : ""}`}
+            style={{
+              left: `${((a[0] + b[0]) / 2) * 100}%`,
+              top: `${((a[1] + b[1]) / 2) * 100}%`,
+              cursor: across ? "ew-resize" : "ns-resize",
+            }}
+            aria-label={`${EDGE_NAMES[i]} edge. Arrow keys to move, Shift for bigger steps.`}
+            {...handleProps("edge", i)}
+          >
+            <span
+              className="vx-handle-bar"
+              style={{ transform: `rotate(${angle}deg)` }}
+              aria-hidden="true"
+            />
+          </button>
+        );
+      })}
+      {corners.map(([x, y], i) => (
+        <button
+          key={`c${i}`}
+          type="button"
+          className={`vx-handle ${active === `corner${i}` ? "on" : ""}`}
+          style={{ left: `${x * 100}%`, top: `${y * 100}%` }}
+          aria-label={`${CORNER_NAMES[i]} corner. Arrow keys to move, Shift for bigger steps.`}
+          {...handleProps("corner", i)}
+        >
+          <span className="vx-handle-dot" aria-hidden="true" />
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function CropPreview({ url, corners, surface }) {
+  const canvasRef = useRef(null);
+  const [source, setSource] = useState(null);
+  const [size, setSize] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    setSource(null);
+    loadPreviewSource(url)
+      .then((data) => live && setSource({ url, data }))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [url]);
+
+  useEffect(() => {
+    if (!source || source.url !== url) return;
+    const frame = requestAnimationFrame(() => {
+      const img = warpPreview(source.data, corners, PREVIEW_MAX_SIDE);
+      const canvas = canvasRef.current;
+      if (!img || !canvas) return;
+      canvas.width = img.width;
+      canvas.height = img.height;
+      canvas.getContext("2d").putImageData(img, 0, 0);
+      setSize((prev) =>
+        prev?.w === img.width && prev?.h === img.height
+          ? prev
+          : { w: img.width, h: img.height },
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [source, url, corners]);
+
+  let box;
+  if (surface && size) {
+    const k = Math.min(surface.w / size.w, surface.h / size.h);
+    box = { width: Math.round(size.w * k), height: Math.round(size.h * k) };
+  }
+  return (
+    <canvas
+      ref={canvasRef}
+      className="vx-doc vx-doc-sheet vx-preview"
+      style={source ? box : { visibility: "hidden" }}
+      role="img"
+      aria-label="Preview of the straightened page"
+    />
+  );
 }
 
 async function encodeJpeg(blob, rotation = 0) {
@@ -486,7 +889,7 @@ const HOW = [
   {
     icon: ScanLine,
     t: "Scan",
-    d: "Vertex finds each page, straightens it and cleans it up.",
+    d: "Vertex finds each page. Check the corners, then it straightens and cleans it up.",
   },
   {
     icon: Download,
@@ -576,6 +979,10 @@ export default function VertexScanner() {
           resultBlob: null,
           resultUrl: null,
           rotation: 0,
+          corners: null,
+          autoCorners: null,
+          confirmedCorners: null,
+          detected: false,
           error: "",
         };
       });
@@ -775,29 +1182,114 @@ export default function VertexScanner() {
   const scanAll = useCallback(async () => {
     setProcessing(true);
     const pending = items.filter((i) => i.state === "pending");
+    let first = null;
     for (const it of pending) {
-      patch(it.id, { state: "processing" });
+      patch(it.id, { state: "detecting", error: "" });
       try {
-        const blob = await scanDocument(it.file);
+        const found = (await detectCorners(it.file))?.corners;
+        const auto = quadIsValid(found) ? found : FALLBACK_CORNERS;
         patch(it.id, {
-          state: "done",
-          resultBlob: blob,
-          resultUrl: URL.createObjectURL(blob),
+          state: "review",
+          corners: auto,
+          autoCorners: auto,
+          confirmedCorners: null,
+          detected: auto === found,
         });
+        first ??= it.id;
       } catch (err) {
         patch(it.id, { state: "error", error: err.message || "Scan failed" });
       }
     }
     setProcessing(false);
+    if (first != null) setSelectedId(first);
   }, [items, patch]);
+
+  const setCorners = useCallback((id, corners) => {
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id && it.state === "review" ? { ...it, corners } : it,
+      ),
+    );
+  }, []);
+
+  const resetCorners = useCallback(
+    (id) => {
+      const it = itemsRef.current.find((i) => i.id === id);
+      if (it?.state === "review") patch(id, { corners: it.autoCorners });
+    },
+    [patch],
+  );
+
+  // Re-uses the existing result when the corners match the ones it was scanned with.
+  const finishScan = useCallback(
+    async (it, corners) => {
+      if (it.resultBlob && sameCorners(corners, it.confirmedCorners)) {
+        patch(it.id, { state: "done", error: "" });
+        return;
+      }
+      patch(it.id, { state: "processing", error: "" });
+      try {
+        const blob = await scanDocument(it.file, corners);
+        if (it.resultUrl) URL.revokeObjectURL(it.resultUrl);
+        patch(it.id, {
+          state: "done",
+          confirmedCorners: corners,
+          resultBlob: blob,
+          resultUrl: URL.createObjectURL(blob),
+        });
+      } catch (err) {
+        patch(it.id, { state: "review", error: err.message || "Scan failed" });
+      }
+    },
+    [patch],
+  );
+
+  const confirmCrop = useCallback(
+    (id) => {
+      const list = itemsRef.current;
+      const it = list.find((i) => i.id === id);
+      if (!confirmable(it)) return;
+      const at = list.indexOf(it);
+      const next =
+        list.slice(at + 1).find((i) => i.state === "review") ||
+        list.slice(0, at).find((i) => i.state === "review");
+      if (next) setSelectedId(next.id);
+      return finishScan(it, it.corners);
+    },
+    [finishScan],
+  );
+
+  const confirmAll = useCallback(async () => {
+    const queue = itemsRef.current.filter(confirmable);
+    for (const it of queue) patch(it.id, { state: "processing", error: "" });
+    for (const it of queue) await finishScan(it, it.corners);
+  }, [patch, finishScan]);
+
+  const adjustCrop = useCallback(
+    (id) => {
+      const it = itemsRef.current.find((i) => i.id === id);
+      if (it?.state !== "done" || !it.confirmedCorners) return;
+      patch(id, { state: "review", corners: it.confirmedCorners, error: "" });
+    },
+    [patch],
+  );
 
   const rescanAll = useCallback(() => {
     setRescanTick((t) => t + 1);
     setItems((prev) =>
       prev.map((it) => {
-        if (it.state !== "done") return it;
+        if (it.state !== "done" && it.state !== "error") return it;
         if (it.resultUrl) URL.revokeObjectURL(it.resultUrl);
-        return { ...it, state: "pending", resultBlob: null, resultUrl: null };
+        return {
+          ...it,
+          state: "pending",
+          error: "",
+          resultBlob: null,
+          resultUrl: null,
+          corners: null,
+          autoCorners: null,
+          confirmedCorners: null,
+        };
       }),
     );
   }, []);
@@ -893,6 +1385,13 @@ export default function VertexScanner() {
   }
 
   const canRotate = selected?.state === "done";
+  const reviewing = selected?.state === "review";
+  const canAdjust = canRotate && !!selected.confirmedCorners;
+  const cornersValid =
+    reviewing &&
+    quadIsValid(selected.corners, selected.dims?.w, selected.dims?.h);
+  const cornersMoved =
+    reviewing && !sameCorners(selected.corners, selected.autoCorners);
   const selectedIdForKeys = canRotate ? selected.id : null;
   useEffect(() => {
     if (selectedIdForKeys == null) return;
@@ -987,16 +1486,24 @@ export default function VertexScanner() {
   const doneCount = items.filter((i) => i.state === "done").length;
   const pendingCount = items.filter((i) => i.state === "pending").length;
   const errorCount = items.filter((i) => i.state === "error").length;
+  const reviewCount = items.filter((i) => i.state === "review").length;
+  const confirmingCount = items.filter((i) => i.state === "processing").length;
+  const detectedCount = items.filter(
+    (i) => i.state !== "pending" && i.state !== "detecting",
+  ).length;
   const exportSeparate = exportMode === "separate" && doneCount > 1;
   const phase = processing
     ? "processing"
-    : items.every((i) => i.state === "done" || i.state === "error")
-      ? "done"
-      : "ready";
+    : reviewCount || confirmingCount
+      ? "review"
+      : items.every((i) => i.state === "done" || i.state === "error")
+        ? "done"
+        : "ready";
   const stepIndex = phase === "done" && doneCount > 0 ? 2 : 1;
   const year = new Date().getFullYear();
   const progress = items.length
-    ? Math.min(doneCount, items.length) / items.length
+    ? Math.min(phase === "review" ? doneCount : detectedCount, items.length) /
+      items.length
     : 0;
 
   const scrollToId = (id) => (e) => {
@@ -1189,7 +1696,7 @@ export default function VertexScanner() {
                 i < stepIndex
                   ? 1
                   : i === stepIndex
-                    ? phase === "processing"
+                    ? phase === "processing" || phase === "review"
                       ? progress
                       : 1
                     : 0;
@@ -1286,9 +1793,12 @@ export default function VertexScanner() {
                           ? ", scanned"
                           : it.state === "error"
                             ? ", failed"
-                            : it.state === "processing"
+                            : it.state === "processing" ||
+                                it.state === "detecting"
                               ? ", scanning"
-                              : ""
+                              : it.state === "review"
+                                ? ", needs review"
+                                : ""
                       }`}
                       aria-describedby="vx-reorder-help"
                       title={`Page ${i + 1} · ← → to switch`}
@@ -1303,11 +1813,13 @@ export default function VertexScanner() {
                       }}
                     >
                       <img
-                        src={it.resultUrl || it.originalUrl}
+                        src={
+                          it.state === "done" ? it.resultUrl : it.originalUrl
+                        }
                         alt=""
                         draggable={false}
                         style={
-                          it.resultUrl && angleOf(it)
+                          it.state === "done" && angleOf(it)
                             ? {
                                 transform: `rotate(${angleOf(it)}deg)${
                                   it.rotation % 180 ? " scale(1.334)" : ""
@@ -1316,7 +1828,8 @@ export default function VertexScanner() {
                             : undefined
                         }
                       />
-                      {it.state === "processing" && (
+                      {(it.state === "processing" ||
+                        it.state === "detecting") && (
                         <span className="vx-thumb-busy">
                           <Loader2
                             size={16}
@@ -1331,6 +1844,11 @@ export default function VertexScanner() {
                       {it.state === "done" && (
                         <span className="vx-thumb-st ok" aria-hidden="true">
                           <Check size={11} strokeWidth={3} />
+                        </span>
+                      )}
+                      {it.state === "review" && (
+                        <span className="vx-thumb-st rev" aria-hidden="true">
+                          <Crop size={11} strokeWidth={2.5} />
                         </span>
                       )}
                       {it.state === "error" && (
@@ -1366,12 +1884,35 @@ export default function VertexScanner() {
                   {(selected.name.split(".").pop() || "").toUpperCase()}
                 </span>
               </div>
-              {(canRotate || !processing) && (
+              {(canRotate || reviewing || !processing) && (
                 <div
                   className="vx-doc-tools"
                   role="toolbar"
                   aria-label="Page tools"
                 >
+                  {reviewing && (
+                    <button
+                      className="vx-btn vx-btn-quiet vx-tip"
+                      aria-label="Reset corners to the detected position"
+                      data-tip="Back to detected corners"
+                      disabled={!cornersMoved}
+                      onClick={() => resetCorners(selected.id)}
+                    >
+                      <Undo2 size={16} strokeWidth={1.75} />
+                      Reset
+                    </button>
+                  )}
+                  {canAdjust && (
+                    <button
+                      className="vx-btn vx-btn-quiet vx-tip"
+                      aria-label="Adjust crop corners"
+                      data-tip="Adjust corners"
+                      onClick={() => adjustCrop(selected.id)}
+                    >
+                      <Crop size={16} strokeWidth={1.75} />
+                      Adjust
+                    </button>
+                  )}
                   {canRotate && (
                     <button
                       className="vx-btn vx-btn-quiet vx-tip"
@@ -1403,10 +1944,24 @@ export default function VertexScanner() {
               )}
             </header>
 
+            {reviewing && (selected.error || !selected.detected) && (
+              <p
+                className={`vx-review-note ${selected.error ? "err" : ""}`}
+                role={selected.error ? "alert" : undefined}
+              >
+                {selected.error ||
+                  "We couldn't find the page automatically. Drag the four corners to the page edges, then confirm."}
+              </p>
+            )}
             <div className="vx-compare">
               <figure className="vx-pane">
                 <figcaption className="vx-pane-label">
-                  <span className="vx-pane-state">Original</span>
+                  <span className="vx-pane-state">
+                    {reviewing ? "Adjust corners" : "Original"}
+                  </span>
+                  {reviewing && (
+                    <span className="vx-pane-rot">Drag the handles</span>
+                  )}
                 </figcaption>
                 <div className="vx-pane-surface">
                   <span className="vx-photo" style={originalBox}>
@@ -1414,8 +1969,21 @@ export default function VertexScanner() {
                       src={selected.originalUrl}
                       alt="Original"
                       className="vx-doc vx-doc-photo"
+                      draggable={false}
                     />
-                    {selected.state === "processing" && (
+                    {reviewing && (
+                      <CornerEditor
+                        key={selected.id}
+                        corners={selected.corners}
+                        aspect={
+                          selected.dims ? selected.dims.w / selected.dims.h : 1
+                        }
+                        invalid={!cornersValid}
+                        onChange={(c) => setCorners(selected.id, c)}
+                      />
+                    )}
+                    {(selected.state === "processing" ||
+                      selected.state === "detecting") && (
                       <span className="vx-scan" aria-hidden="true">
                         <span className="vx-scanline" />
                       </span>
@@ -1426,14 +1994,23 @@ export default function VertexScanner() {
 
               <figure className="vx-pane">
                 <figcaption className="vx-pane-label">
-                  <span className={`vx-pane-state is-${selected.state}`}>
+                  <span
+                    className={`vx-pane-state is-${
+                      selected.state === "detecting"
+                        ? "processing"
+                        : selected.state
+                    }`}
+                  >
                     {selected.state === "done"
                       ? "Result"
-                      : selected.state === "processing"
+                      : selected.state === "processing" ||
+                          selected.state === "detecting"
                         ? "Scanning"
                         : selected.state === "error"
                           ? "Error"
-                          : "Preview"}
+                          : selected.state === "review"
+                            ? "Crop preview"
+                            : "Preview"}
                   </span>
                   {canRotate && selected.rotation !== 0 && (
                     <span className="vx-pane-rot">
@@ -1465,7 +2042,29 @@ export default function VertexScanner() {
                       }
                     />
                   )}
-                  {selected.state === "processing" && (
+                  {reviewing && cornersValid && (
+                    <CropPreview
+                      url={selected.originalUrl}
+                      corners={selected.corners}
+                      surface={surface}
+                    />
+                  )}
+                  {reviewing && !cornersValid && (
+                    <div className="vx-state vx-state-msg" role="alert">
+                      <TriangleAlert
+                        size={24}
+                        strokeWidth={2}
+                        className="vx-state-ic err"
+                      />
+                      <p className="vx-state-t">Corners don't form a page</p>
+                      <p className="vx-state-d">
+                        Move the handles so the outline doesn't cross itself
+                        and covers the page.
+                      </p>
+                    </div>
+                  )}
+                  {(selected.state === "processing" ||
+                    selected.state === "detecting") && (
                     <div className="vx-state">
                       <div
                         className="vx-sheet vx-sheet-skel"
@@ -1478,7 +2077,9 @@ export default function VertexScanner() {
                         </span>
                       </div>
                       <p className="vx-state-d">
-                        Straightening and cleaning up…
+                        {selected.state === "detecting"
+                          ? "Finding the page…"
+                          : "Straightening and cleaning up…"}
                       </p>
                     </div>
                   )}
@@ -1525,11 +2126,21 @@ export default function VertexScanner() {
                 {phase === "processing" ? (
                   <>
                     <Loader2 size={16} className="vx-spin" strokeWidth={2} />
-                    Scanning page {Math.min(
-                      doneCount + 1,
+                    Finding page {Math.min(
+                      detectedCount + 1,
                       items.length,
                     )} of {items.length}…
                   </>
+                ) : phase === "review" ? (
+                  reviewCount ? (
+                    `${reviewCount} ${reviewCount === 1 ? "page" : "pages"} to review · check the corners, then confirm`
+                  ) : (
+                    <>
+                      <Loader2 size={16} className="vx-spin" strokeWidth={2} />
+                      Scanning {confirmingCount}{" "}
+                      {confirmingCount === 1 ? "page" : "pages"}…
+                    </>
+                  )
                 ) : phase === "done" ? (
                   doneCount > 0 ? (
                     `${doneCount} ${doneCount === 1 ? "page" : "pages"} scanned`
@@ -1540,7 +2151,8 @@ export default function VertexScanner() {
                   `${pendingCount} ${pendingCount === 1 ? "page" : "pages"} ready to scan`
                 )}
               </span>
-              {phase === "processing" && (
+              {(phase === "processing" ||
+                (phase === "review" && !reviewCount)) && (
                 <span className="vx-progress" aria-hidden="true">
                   <span style={{ transform: `scaleX(${progress})` }} />
                 </span>
@@ -1576,6 +2188,31 @@ export default function VertexScanner() {
 
             {phase !== "processing" && (
               <div className="vx-ws-export">
+                {phase === "review" && pendingCount > 0 && (
+                  <button className="vx-btn vx-btn-secondary" onClick={scanAll}>
+                    <ScanLine size={16} strokeWidth={2} />
+                    Scan {pendingCount > 1 ? `${pendingCount} new pages` : "new page"}
+                  </button>
+                )}
+                {phase === "review" && reviewCount > 1 && (
+                  <button
+                    className="vx-btn vx-btn-secondary"
+                    onClick={confirmAll}
+                  >
+                    <Check size={16} strokeWidth={2} />
+                    Confirm all {reviewCount}
+                  </button>
+                )}
+                {phase === "review" && reviewing && (
+                  <button
+                    className="vx-btn vx-btn-primary"
+                    onClick={() => confirmCrop(selected.id)}
+                    disabled={!cornersValid}
+                  >
+                    <Check size={16} strokeWidth={2} />
+                    Confirm crop
+                  </button>
+                )}
                 {phase === "ready" && (
                   <button className="vx-btn vx-btn-primary" onClick={scanAll}>
                     <ScanLine size={16} strokeWidth={2} />
