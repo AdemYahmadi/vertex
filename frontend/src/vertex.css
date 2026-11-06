@@ -1835,3 +1835,14 @@
     gap: var(--sp-2);
   }
 }
+@media (max-width: 767px), (max-height: 520px) {
+  .vx-ws-actions.is-review,
+  .vx-ws-actions.is-review > .vx-ws-export {
+    position: static;
+    background: none;
+  }
+  .vx-ws-actions.is-review::before,
+  .vx-ws-actions.is-review > .vx-ws-export::before {
+    display: none;
+  }
+}
