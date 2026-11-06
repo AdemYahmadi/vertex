@@ -143,13 +143,14 @@ async def scan(
     file: UploadFile = File(...),
     fmt: str = Query("pdf", pattern="^(pdf|png)$"),
     corners: str | None = Form(None),
+    trim: bool = Form(True),
 ):
     img = await read_upload(file)
     h, w = img.shape[:2]
     quad = parse_corners(corners, w, h) if corners else None
 
     try:
-        result = processor.run(img, quad)
+        result = processor.run(img, quad, trim)
         del img
     except ValueError:
         raise HTTPException(
