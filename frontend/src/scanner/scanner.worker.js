@@ -6,11 +6,13 @@ import * as ort from "onnxruntime-web/wasm";
 // wrapper makes a dynamic import() of it resolve to a broken thenable.
 import cvReady from "@techstark/opencv-js";
 import { detectDocument, scanDocument, NoDocumentError } from "./pipeline.js";
+import ortWasmUrl from "../../node_modules/onnxruntime-web/dist/ort-wasm-simd.wasm?url";
 
 const MODEL_URL = "/models/docaligner-fastvit_t8.onnx";
 
 // Threads need cross-origin isolation, which would block Google Fonts.
 ort.env.wasm.numThreads = 1;
+ort.env.wasm.wasmPaths = { "ort-wasm-simd.wasm": ortWasmUrl };
 
 let ready = null;
 
