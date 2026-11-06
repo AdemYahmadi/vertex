@@ -97,13 +97,13 @@ async function detect(file, maxSide) {
   }
 }
 
-async function scan(file, maxSide, corners) {
+async function scan(file, maxSide, corners, trim = true) {
   const { cv, runModel } = await load();
   const bgr = await decodeBgr(cv, file, maxSide);
   const quad = corners && corners.map(([x, y]) => [x * bgr.cols, y * bgr.rows]);
   let result;
   try {
-    result = await scanDocument(cv, runModel, bgr, quad);
+    result = await scanDocument(cv, runModel, bgr, quad, trim);
   } finally {
     bgr.delete();
   }
@@ -124,7 +124,12 @@ self.onmessage = async ({ data }) => {
       const result = await detect(data.file, data.maxSide);
       self.postMessage({ id, ok: true, result });
     } else if (type === "scan") {
-      const result = await scan(data.file, data.maxSide, data.corners);
+      const result = await scan(
+        data.file,
+        data.maxSide,
+        data.corners,
+        data.trim,
+      );
       self.postMessage({ id, ok: true, result });
     }
   } catch (err) {

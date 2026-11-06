@@ -44,6 +44,6 @@ export function detectLocally(file, maxSide) {
   return call({ type: "detect", file, maxSide });
 }
 
-export function scanLocally(file, maxSide, corners) {
-  return call({ type: "scan", file, maxSide, corners });
+export function scanLocally(file, maxSide, corners, trim = true) {
+  return call({ type: "scan", file, maxSide, corners, trim });
 }

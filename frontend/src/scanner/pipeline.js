@@ -355,7 +355,13 @@ export async function detectDocument(cv, runModel, bgr) {
   return corners && orderPoints(corners);
 }
 
-export async function scanDocument(cv, runModel, bgr, corners = null) {
+export async function scanDocument(
+  cv,
+  runModel,
+  bgr,
+  corners = null,
+  trim = true,
+) {
   let warped;
   if (corners) {
     warped = warpPerspective(cv, bgr, corners, true);
@@ -365,7 +371,7 @@ export async function scanDocument(cv, runModel, bgr, corners = null) {
     warped = warpPerspective(cv, bgr, found);
   }
   try {
-    return enhanceDocument(cv, warped);
+    return enhanceDocument(cv, warped, trim);
   } finally {
     warped.delete();
   }

@@ -106,10 +106,10 @@ function scanError(err) {
   );
 }
 
-async function scanDocument(file, corners) {
+async function scanDocument(file, corners, trim = true) {
   if (USE_MOCK) return mockScan(file);
   try {
-    return await scanLocally(file, MAX_SIDE, corners);
+    return await scanLocally(file, MAX_SIDE, corners, trim);
   } catch (err) {
     throw scanError(err);
   }
@@ -1092,7 +1092,11 @@ export default function VertexScanner() {
       }
       patch(it.id, { state: "processing", error: "" });
       try {
-        const blob = await scanDocument(it.file, corners);
+        const blob = await scanDocument(
+          it.file,
+          corners,
+          sameCorners(corners, it.autoCorners),
+        );
         if (it.resultUrl) URL.revokeObjectURL(it.resultUrl);
         patch(it.id, {
           state: "done",
