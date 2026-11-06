@@ -198,18 +198,18 @@ async function postForm(url, file, fields = {}) {
   }
 }
 
-function postScan(file, corners) {
+function postScan(file, corners, trim = true) {
   const sep = API_URL.includes("?") ? "&" : "?";
   return postForm(
     `${API_URL}${sep}fmt=png`,
     file,
-    corners ? { corners: JSON.stringify(corners) } : {},
+    corners ? { corners: JSON.stringify(corners), trim: String(trim) } : {},
   );
 }
 
-async function scanDocument(file, corners) {
+async function scanDocument(file, corners, trim = true) {
   if (USE_MOCK) return mockScan(file);
-  return (await callApi(() => postScan(file, corners))).blob();
+  return (await callApi(() => postScan(file, corners, trim))).blob();
 }
 
 async function detectCorners(file) {
@@ -1229,7 +1229,11 @@ export default function VertexScanner() {
       }
       patch(it.id, { state: "processing", error: "" });
       try {
-        const blob = await scanDocument(it.file, corners);
+        const blob = await scanDocument(
+          it.file,
+          corners,
+          sameCorners(corners, it.autoCorners),
+        );
         if (it.resultUrl) URL.revokeObjectURL(it.resultUrl);
         patch(it.id, {
           state: "done",
