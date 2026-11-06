@@ -1,4 +1,5 @@
 import gc
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -6,10 +7,11 @@ from contextlib import asynccontextmanager
 import cv2
 import img2pdf
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from src.core.geometry import is_valid_quad
 from src.processor import DocumentProcessor
 
 logging.basicConfig(level=logging.INFO)
@@ -68,11 +70,7 @@ def health():
     )
 
 
-@app.post("/scan")
-async def scan(
-    file: UploadFile = File(...),
-    fmt: str = Query("pdf", pattern="^(pdf|png)$"),
-):
+async def read_upload(file: UploadFile) -> np.ndarray:
     if processor is None:
         raise HTTPException(503, "Service is still starting up. Try again shortly.")
     if file.content_type not in ALLOWED_TYPES:
@@ -96,9 +94,62 @@ async def scan(
         img = cv2.resize(
             img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
         )
+    return img
+
+
+def parse_corners(raw: str, width: int, height: int) -> np.ndarray:
+    """Parse normalized [[x, y], ...] corners (TL, TR, BR, BL) into pixels."""
+    try:
+        pts = np.asarray(json.loads(raw), dtype="float64")
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Corners must be a JSON list of four [x, y] pairs.")
+    if pts.shape != (4, 2):
+        raise HTTPException(400, "Corners must be a JSON list of four [x, y] pairs.")
+    pts = pts * [width, height]
+    if not is_valid_quad(pts, width, height):
+        raise HTTPException(
+            422,
+            "Those corners don't form a valid page outline. "
+            "Make sure the four corners don't cross and enclose the page.",
+        )
+    return pts.astype("float32")
+
+
+@app.post("/detect")
+async def detect(file: UploadFile = File(...)):
+    img = await read_upload(file)
+    h, w = img.shape[:2]
+    try:
+        corners = processor.detect(img)
+    except Exception:
+        logger.exception("Detection error")
+        raise HTTPException(500, "Processing failed. Please try again.")
+    finally:
+        del img
+        gc.collect()
+    if corners is not None and not is_valid_quad(corners, w, h):
+        corners = None
+    return {
+        "width": w,
+        "height": h,
+        "corners": None
+        if corners is None
+        else [[float(x) / w, float(y) / h] for x, y in corners],
+    }
+
+
+@app.post("/scan")
+async def scan(
+    file: UploadFile = File(...),
+    fmt: str = Query("pdf", pattern="^(pdf|png)$"),
+    corners: str | None = Form(None),
+):
+    img = await read_upload(file)
+    h, w = img.shape[:2]
+    quad = parse_corners(corners, w, h) if corners else None
 
     try:
-        result = processor.run(img)
+        result = processor.run(img, quad)
         del img
     except ValueError:
         raise HTTPException(

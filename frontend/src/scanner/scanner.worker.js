@@ -5,7 +5,7 @@ import * as ort from "onnxruntime-web/wasm";
 // Static import on purpose: opencv-js exports a Promise, and Vite's CommonJS
 // wrapper makes a dynamic import() of it resolve to a broken thenable.
 import cvReady from "@techstark/opencv-js";
-import { scanDocument, NoDocumentError } from "./pipeline.js";
+import { detectDocument, scanDocument, NoDocumentError } from "./pipeline.js";
 
 const MODEL_URL = "/models/docaligner-fastvit_t8.onnx";
 
@@ -68,16 +68,40 @@ async function encodePng(cv, bgr) {
   return canvas.convertToBlob({ type: "image/png" });
 }
 
-async function scan(file, maxSide) {
-  const { cv, runModel } = await load();
+async function decodeBgr(cv, file, maxSide) {
   const pixels = await decode(file, maxSide);
   const rgba = cv.matFromImageData(pixels);
   const bgr = new cv.Mat();
   cv.cvtColor(rgba, bgr, cv.COLOR_RGBA2BGR);
   rgba.delete();
+  return bgr;
+}
+
+// Corners come back normalized to 0..1, ordered TL, TR, BR, BL.
+async function detect(file, maxSide) {
+  const { cv, runModel } = await load();
+  const bgr = await decodeBgr(cv, file, maxSide);
+  const width = bgr.cols,
+    height = bgr.rows;
+  try {
+    const corners = await detectDocument(cv, runModel, bgr);
+    return {
+      width,
+      height,
+      corners: corners && corners.map(([x, y]) => [x / width, y / height]),
+    };
+  } finally {
+    bgr.delete();
+  }
+}
+
+async function scan(file, maxSide, corners) {
+  const { cv, runModel } = await load();
+  const bgr = await decodeBgr(cv, file, maxSide);
+  const quad = corners && corners.map(([x, y]) => [x * bgr.cols, y * bgr.rows]);
   let result;
   try {
-    result = await scanDocument(cv, runModel, bgr);
+    result = await scanDocument(cv, runModel, bgr, quad);
   } finally {
     bgr.delete();
   }
@@ -94,9 +118,12 @@ self.onmessage = async ({ data }) => {
     if (type === "warm") {
       await load();
       self.postMessage({ id, ok: true });
+    } else if (type === "detect") {
+      const result = await detect(data.file, data.maxSide);
+      self.postMessage({ id, ok: true, result });
     } else if (type === "scan") {
-      const blob = await scan(data.file, data.maxSide);
-      self.postMessage({ id, ok: true, blob });
+      const result = await scan(data.file, data.maxSide, data.corners);
+      self.postMessage({ id, ok: true, result });
     }
   } catch (err) {
     self.postMessage({

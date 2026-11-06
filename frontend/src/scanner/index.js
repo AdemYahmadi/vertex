@@ -13,7 +13,7 @@ function getWorker() {
       const job = pending.get(data.id);
       if (!job) return;
       pending.delete(data.id);
-      if (data.ok) job.resolve(data.blob);
+      if (data.ok) job.resolve(data.result);
       else job.reject(Object.assign(new Error(data.message), data));
     };
     worker.onerror = (e) => {
@@ -40,6 +40,10 @@ export function warmScanner() {
   return call({ type: "warm" }).catch(() => {});
 }
 
-export function scanLocally(file, maxSide) {
-  return call({ type: "scan", file, maxSide });
+export function detectLocally(file, maxSide) {
+  return call({ type: "detect", file, maxSide });
+}
+
+export function scanLocally(file, maxSide, corners) {
+  return call({ type: "scan", file, maxSide, corners });
 }

@@ -31,8 +31,32 @@ def order_points(pts: np.ndarray) -> np.ndarray:
     return rect
 
 
-def warp_perspective(image: np.ndarray, points: np.ndarray) -> np.ndarray:
-    rect = order_points(points)
+def is_valid_quad(points: np.ndarray, width: int, height: int) -> bool:
+    """Check that TL, TR, BR, BL points form a convex, non-degenerate quad."""
+    pts = np.asarray(points, dtype="float64").reshape(-1, 2)
+    if pts.shape != (4, 2) or not np.all(np.isfinite(pts)):
+        return False
+    if np.any(pts < -0.5) or np.any(pts[:, 0] > width + 0.5) or np.any(pts[:, 1] > height + 0.5):
+        return False
+    for i in range(4):
+        a, b, c = pts[i], pts[(i + 1) % 4], pts[(i + 2) % 4]
+        cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+        if cross <= 0:
+            return False
+    min_side = 0.02 * max(width, height)
+    if any(np.linalg.norm(pts[i] - pts[(i + 1) % 4]) < min_side for i in range(4)):
+        return False
+    return cv2.contourArea(pts.astype("float32")) >= 0.005 * width * height
+
+
+def warp_perspective(
+    image: np.ndarray, points: np.ndarray, ordered: bool = False
+) -> np.ndarray:
+    rect = (
+        np.asarray(points, dtype="float32").reshape(4, 2)
+        if ordered
+        else order_points(points)
+    )
     tl, tr, br, bl = rect
     width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
     width_b = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))

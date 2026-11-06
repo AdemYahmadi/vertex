@@ -163,8 +163,8 @@ export function orderPoints(pts) {
   ];
 }
 
-export function warpPerspective(cv, bgr, points) {
-  const [tl, tr, br, bl] = orderPoints(points);
+export function warpPerspective(cv, bgr, points, ordered = false) {
+  const [tl, tr, br, bl] = ordered ? points : orderPoints(points);
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const maxWidth = Math.max(Math.trunc(dist(br, bl)), Math.trunc(dist(tr, tl)));
   const maxHeight = Math.max(
@@ -350,10 +350,20 @@ export function enhanceDocument(cv, input, trim = true) {
 // src/processor.py
 // ---------------------------------------------------------------------------
 
-export async function scanDocument(cv, runModel, bgr) {
+export async function detectDocument(cv, runModel, bgr) {
   const corners = await detectCorners(cv, runModel, bgr);
-  if (!corners) throw new NoDocumentError();
-  const warped = warpPerspective(cv, bgr, corners);
+  return corners && orderPoints(corners);
+}
+
+export async function scanDocument(cv, runModel, bgr, corners = null) {
+  let warped;
+  if (corners) {
+    warped = warpPerspective(cv, bgr, corners, true);
+  } else {
+    const found = await detectCorners(cv, runModel, bgr);
+    if (!found) throw new NoDocumentError();
+    warped = warpPerspective(cv, bgr, found);
+  }
   try {
     return enhanceDocument(cv, warped);
   } finally {

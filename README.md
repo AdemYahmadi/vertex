@@ -44,6 +44,7 @@ It comes in two forms:
 
 - **Deep-learning document detection** — locates the page and its four corners even against complex backgrounds and in uneven lighting
 - **Perspective correction** — flattens the detected page into a clean, rectangular scan of any paper size
+- **Corner review** (web app) — check the detected corners, drag any of them to fix the crop with a live preview, then confirm
 - **Illumination normalization** — evens out shadows and bright spots for a uniform page
 - **Scanner-style enhancement** — pure-white background, crisp ink, and sharpened edges
 
