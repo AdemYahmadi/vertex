@@ -2119,7 +2119,7 @@ export default function VertexScanner() {
           )}
 
           <div
-            className={`vx-ws-actions ${phase === "processing" ? "is-busy" : ""}`}
+            className={`vx-ws-actions ${phase === "processing" ? "is-busy" : ""} ${reviewing ? "is-review" : ""}`}
           >
             <div className="vx-ws-meta">
               <span className="vx-ws-status" aria-live="polite">
